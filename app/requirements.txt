@@ -1,4 +1,4 @@
-# Detector de placas con YOLOv11 (Ultralytics).
+# Pipeline OCR de placas. Python 3.10, GPU NVIDIA.
 #
 # torch con CUDA: instalar PRIMERO desde el indice de PyTorch, p.ej. CUDA 12.1:
 #   pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
@@ -7,10 +7,19 @@
 # Luego:
 #   pip install -r requirements.txt
 
+# --- Etapa deteccion: YOLOv11 (Ultralytics + torch) ---
 ultralytics==8.4.56
 torch==2.5.1
 torchvision==0.20.1
-numpy==1.23.5
+
+# --- Etapas segmentacion U-Net y OCR: TensorFlow/Keras ---
+# TF 2.10 = ULTIMA version con soporte GPU nativo en Windows (las nuevas exigen WSL2).
+# Requiere CUDA 11.2 + cuDNN 8.1 (distinto del CUDA 12.1 de torch; usar conda o WSL si chocan).
+tensorflow==2.10.1
+scikit-learn==1.3.2     # metricas/class_weight en train_cnn_ocr.py
+
+# --- Comun ---
+numpy==1.23.5           # <1.24 por compatibilidad con TF 2.10
 opencv-python==4.8.1.78
 Pillow
 matplotlib
