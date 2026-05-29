@@ -240,7 +240,7 @@ def main():
     parser.add_argument(
         "--size",
         type=int,
-        default=48,
+        default=64,
         help="Tamano final de cada crop en pixeles.",
     )
     parser.add_argument(

@@ -159,7 +159,22 @@ def segment_characters(image_path, debug_dir="debug_chars"):
     return crops, boxes
 
 
-def predict_plate(image_path, model_path, classes_path):
+def decode_with_rules(prob_list, classes, num_letters):
+    """Decodifica usando el formato de placa Ecuador: las primeras `num_letters`
+    posiciones son LETRAS (A-Z) y el resto son DIGITOS (0-9). Restringe el argmax
+    a las clases validas por posicion -> elimina confusiones cruzadas (O/0, I/1, Z/2)."""
+    letter_ids = [i for i, c in enumerate(classes) if c.isalpha()]
+    digit_ids = [i for i, c in enumerate(classes) if c.isdigit()]
+
+    decoded = []
+    for position, probs in enumerate(prob_list):
+        allowed = letter_ids if position < num_letters else digit_ids
+        best = max(allowed, key=lambda i: probs[i])
+        decoded.append(classes[best])
+    return "".join(decoded)
+
+
+def predict_plate(image_path, model_path, classes_path, num_letters=3):
     model = tf.keras.models.load_model(model_path, compile=False)
     classes = load_classes(classes_path)
 
@@ -180,6 +195,7 @@ def predict_plate(image_path, model_path, classes_path):
     crops, boxes = segment_characters(image_path)
 
     result = ""
+    prob_list = []
 
     print(f"Caracteres segmentados: {len(crops)}")
 
@@ -203,6 +219,7 @@ def predict_plate(image_path, model_path, classes_path):
         processed = np.expand_dims(processed, axis=0)
 
         pred = model.predict(processed, verbose=0)[0]
+        prob_list.append(pred)
 
         top_ids = np.argsort(pred)[-3:][::-1]
         class_id = int(top_ids[0])
@@ -218,8 +235,14 @@ def predict_plate(image_path, model_path, classes_path):
         )
         print(f"Char {i}: {predicted_char}  confianza={confidence:.4f}  top3=[{top_text}]")
 
-    print("\nResultado final:")
+    ruled = decode_with_rules(prob_list, classes, num_letters) if prob_list else ""
+
+    print("\nResultado crudo (argmax):")
     print(result)
+    print(f"\nResultado con reglas posicionales ({num_letters} letras + digitos):")
+    print(ruled)
+    if ruled and ruled != result:
+        print("(las reglas corrigieron al menos un caracter)")
 
     print("\nRevisa la carpeta 'debug_chars' para ver:")
     print("- Los caracteres recortados")
@@ -233,7 +256,8 @@ if __name__ == "__main__":
     parser.add_argument("--image", default="placa.png", help="Ruta de la imagen de placa")
     parser.add_argument("--model", default="Modelos/best_cnn_ocr_uk.keras", help="Ruta del modelo .keras")
     parser.add_argument("--classes", default="Modelos/classes_uk.txt", help="Ruta del archivo classes.txt")
+    parser.add_argument("--num-letters", type=int, default=3, help="Letras iniciales (Ecuador: 3 letras + digitos).")
 
     args = parser.parse_args()
 
-    predict_plate(args.image, args.model, args.classes)
+    predict_plate(args.image, args.model, args.classes, num_letters=args.num_letters)

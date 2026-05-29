@@ -5,7 +5,10 @@ import numpy as np
 import tensorflow as tf
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.utils.class_weight import compute_class_weight
-from tensorflow.keras import layers, models
+from tensorflow.keras import layers, models, regularizers
+
+AUTOTUNE = tf.data.AUTOTUNE
+
 
 class SparseFocalLoss(tf.keras.losses.Loss):
     def __init__(self, gamma=2.0, **kwargs):
@@ -16,7 +19,7 @@ class SparseFocalLoss(tf.keras.losses.Loss):
         ce = tf.keras.losses.sparse_categorical_crossentropy(y_true, y_pred)
         pt = tf.exp(-ce)
         return tf.reduce_mean((1.0 - pt) ** self.gamma * ce)
-    
+
     def get_config(self):
         config = super().get_config()
         config.update({"gamma": self.gamma})
@@ -24,16 +27,20 @@ class SparseFocalLoss(tf.keras.losses.Loss):
 
 
 def build_model(image_size, num_classes):
+    # Augment mas fuerte que antes: cierra la brecha val-test (overfitting) y da mas
+    # variedad a las clases raras (que el oversampling muestra mas veces).
     data_augmentation = tf.keras.Sequential(
         [
-            layers.RandomRotation(0.015),
-            layers.RandomTranslation(0.04, 0.04),
-            layers.RandomZoom(0.08),
-            layers.RandomContrast(0.12),
-            layers.RandomBrightness(0.10),
+            layers.RandomRotation(0.03),          # ~+-11 grados (placas algo inclinadas)
+            layers.RandomTranslation(0.06, 0.06),
+            layers.RandomZoom(0.12),
+            layers.RandomContrast(0.20),
+            layers.RandomBrightness(0.15),
         ],
         name="data_augmentation",
     )
+
+    l2 = regularizers.l2(1e-4)
 
     model = models.Sequential(
         [
@@ -46,30 +53,30 @@ def build_model(image_size, num_classes):
             layers.Conv2D(32, 3, padding="same", activation="relu"),
             layers.BatchNormalization(),
             layers.MaxPooling2D(),
-            layers.Dropout(0.15),
-
-            layers.Conv2D(64, 3, padding="same", activation="relu"),
-            layers.BatchNormalization(),
-            layers.Conv2D(64, 3, padding="same", activation="relu"),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D(),
             layers.Dropout(0.20),
 
+            layers.Conv2D(64, 3, padding="same", activation="relu"),
+            layers.BatchNormalization(),
+            layers.Conv2D(64, 3, padding="same", activation="relu"),
+            layers.BatchNormalization(),
+            layers.MaxPooling2D(),
+            layers.Dropout(0.30),
+
             layers.Conv2D(128, 3, padding="same", activation="relu"),
             layers.BatchNormalization(),
             layers.Conv2D(128, 3, padding="same", activation="relu"),
             layers.BatchNormalization(),
             layers.MaxPooling2D(),
-            layers.Dropout(0.25),
+            layers.Dropout(0.35),
 
             layers.Conv2D(256, 3, padding="same", activation="relu"),
             layers.BatchNormalization(),
             layers.GlobalAveragePooling2D(),
 
-            layers.Dense(256, activation="relu"),
+            layers.Dense(256, activation="relu", kernel_regularizer=l2),
             layers.BatchNormalization(),
-            layers.Dropout(0.40),
-            layers.Dense(num_classes, activation="softmax"),
+            layers.Dropout(0.50),
+            layers.Dense(num_classes, activation="softmax", kernel_regularizer=l2),
         ],
         name="cnn_ocr_plate_chars",
     )
@@ -81,6 +88,18 @@ def build_model(image_size, num_classes):
     )
 
     return model
+
+
+def get_class_names(train_dir):
+    return sorted(d.name for d in Path(train_dir).iterdir() if d.is_dir())
+
+
+def count_images(train_dir):
+    total = 0
+    for class_dir in Path(train_dir).iterdir():
+        if class_dir.is_dir():
+            total += sum(1 for _ in class_dir.glob("*"))
+    return total
 
 
 def load_split(path, image_size, batch_size, shuffle):
@@ -95,12 +114,37 @@ def load_split(path, image_size, batch_size, shuffle):
     )
 
 
+def decode_image(path, label, image_size):
+    raw = tf.io.read_file(path)
+    image = tf.image.decode_png(raw, channels=1)
+    image = tf.image.resize(image, [image_size, image_size], method="bilinear")
+    image = tf.cast(image, tf.float32)  # 0-255; el modelo ya tiene Rescaling(1/255)
+    return image, label
+
+
+def make_balanced_train_ds(train_dir, class_names, image_size, batch_size):
+    # Oversampling balanceado: un stream por clase (repetido) y muestreo equitativo.
+    # Las letras raras (Q, X, U, W...) se ven igual de seguido que los digitos, cada
+    # vez con un augment distinto -> mejor recall en clases raras.
+    per_class = []
+    for index, name in enumerate(class_names):
+        pattern = str(Path(train_dir) / name / "*")
+        files = tf.data.Dataset.list_files(pattern, shuffle=True).repeat()
+        per_class.append(files.map(lambda p, l=index: (p, l), num_parallel_calls=AUTOTUNE))
+
+    weights = [1.0 / len(class_names)] * len(class_names)
+    balanced = tf.data.Dataset.sample_from_datasets(per_class, weights=weights)
+    balanced = balanced.map(
+        lambda p, l: decode_image(p, l, image_size), num_parallel_calls=AUTOTUNE
+    )
+    return balanced.batch(batch_size).prefetch(AUTOTUNE)
+
+
 def optimize_dataset(dataset, shuffle=False):
-    autotune = tf.data.AUTOTUNE
     dataset = dataset.cache()
     if shuffle:
         dataset = dataset.shuffle(2000)
-    return dataset.prefetch(autotune)
+    return dataset.prefetch(AUTOTUNE)
 
 
 def labels_from_dataset(dataset):
@@ -162,10 +206,13 @@ def main():
     parser.add_argument("--output-dir", default="Modelos")
     parser.add_argument("--model-name", default="cnn_ocr_uk.keras")
     parser.add_argument("--classes-name", default="classes_uk.txt")
-    parser.add_argument("--image-size", type=int, default=48)
+    parser.add_argument("--image-size", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--no-class-weight", action="store_true")
+    parser.add_argument("--epochs", type=int, default=60)
+    parser.add_argument(
+        "--no-oversample", action="store_true",
+        help="Desactiva el oversampling balanceado y usa class_weight en su lugar.",
+    )
     args = parser.parse_args()
 
     dataset_dir = Path(args.dataset)
@@ -176,31 +223,35 @@ def main():
     valid_dir = dataset_dir / "valid"
     test_dir = dataset_dir / "test"
 
-    train_ds_raw = load_split(train_dir, args.image_size, args.batch_size, shuffle=True)
-    valid_ds_raw = load_split(valid_dir, args.image_size, args.batch_size, shuffle=False)
-    test_ds_raw = load_split(test_dir, args.image_size, args.batch_size, shuffle=False)
-
-    class_names = train_ds_raw.class_names
+    class_names = get_class_names(train_dir)
     num_classes = len(class_names)
+    total_train = count_images(train_dir)
 
     print("Clases detectadas:")
     print(class_names)
     print(f"Numero de clases: {num_classes}")
+    print(f"Imagenes de train: {total_train}")
+    print(f"Input: {args.image_size}x{args.image_size}x1  | oversample: {not args.no_oversample}")
 
     classes_path = output_dir / args.classes_name
     save_class_names(class_names, classes_path)
     print(f"Clases guardadas en: {classes_path.resolve()}")
 
-    class_weight = None
-    if not args.no_class_weight:
-        class_weight = compute_weights(train_ds_raw, class_names)
-        print("\nClass weights:")
-        for class_id, weight in class_weight.items():
-            print(f"{class_names[class_id]}: {weight:.4f}")
+    valid_ds = optimize_dataset(load_split(valid_dir, args.image_size, args.batch_size, shuffle=False))
+    test_ds = optimize_dataset(load_split(test_dir, args.image_size, args.batch_size, shuffle=False))
 
-    train_ds = optimize_dataset(train_ds_raw, shuffle=True)
-    valid_ds = optimize_dataset(valid_ds_raw)
-    test_ds = optimize_dataset(test_ds_raw)
+    class_weight = None
+    steps_per_epoch = None
+
+    if args.no_oversample:
+        # Ruta clasica: dataset normal + class_weight para el desbalance.
+        train_ds_raw = load_split(train_dir, args.image_size, args.batch_size, shuffle=True)
+        class_weight = compute_weights(train_ds_raw, class_names)
+        train_ds = optimize_dataset(train_ds_raw, shuffle=True)
+    else:
+        # Oversampling balanceado (no se usa class_weight para no corregir dos veces).
+        train_ds = make_balanced_train_ds(train_dir, class_names, args.image_size, args.batch_size)
+        steps_per_epoch = max(1, total_train // args.batch_size)
 
     model = build_model(args.image_size, num_classes)
     model.summary()
@@ -225,16 +276,17 @@ def main():
         ),
         tf.keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=9,
+            patience=10,
             restore_best_weights=True,
             verbose=1,
         ),
     ]
 
-    history = model.fit(
+    model.fit(
         train_ds,
         validation_data=valid_ds,
         epochs=args.epochs,
+        steps_per_epoch=steps_per_epoch,
         class_weight=class_weight,
         callbacks=callbacks,
     )
