@@ -1,0 +1,25 @@
+dataset_ocr
+dataset_ocr_sintetico
+License Plate Recognition.v13i.retinanet
+License Plate Recognition.v13i.tensorflow
+License Plate Recognition.v13i.yolov11
+lpr character segmentation.v3i.yolov11
+Modelo_DeteccionPlacasEc.v3i.yolov12
+Plate_Detection_Segmentation_OCR-main
+Plates Ecuadorian.v3i.yolov11
+Tesis-Placas.v4-yolov4-darknet.retinanet
+Tesis-Placas.v4-yolov4-darknet.tensorflow
+Tesis-Placas.v4-yolov4-darknet.yolov11
+Tesis-Placas.v4-yolov4-darknet.yolov12
+test_resultados
+**.zip
+**.docx
+*venv
+*env
+mmtest
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/

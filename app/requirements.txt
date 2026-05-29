@@ -1,0 +1,16 @@
+# Detector de placas con YOLOv11 (Ultralytics).
+#
+# torch con CUDA: instalar PRIMERO desde el indice de PyTorch, p.ej. CUDA 12.1:
+#   pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+# (sin GPU NVIDIA, omitir el --index-url para la version CPU)
+#
+# Luego:
+#   pip install -r requirements.txt
+
+ultralytics==8.4.56
+torch==2.5.1
+torchvision==0.20.1
+numpy==1.23.5
+opencv-python==4.8.1.78
+Pillow
+matplotlib
