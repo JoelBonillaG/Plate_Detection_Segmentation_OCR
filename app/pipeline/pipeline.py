@@ -31,6 +31,12 @@ AQUI   = os.path.dirname(os.path.abspath(__file__))
 APP    = os.path.dirname(AQUI)
 IN_DIR = os.path.join(APP, "camara", "capturas")
 
+# Flag de prueba: la etapa de filtros (limpieza + agrandado) a veces empeora el
+# OCR (aleja la imagen de la distribucion con que entrenaron U-Net/CNN).
+# True  -> enderezada -> filtros -> segmentacion
+# False -> enderezada -> segmentacion (cruda, sin filtros)
+USAR_FILTROS = False
+
 
 def fuente_de_frames():
     """Genera (nombre, frame) leyendo las fotos crudas de camara/capturas/."""
@@ -83,12 +89,15 @@ def main():
         etapa1.guardar_deteccion(nombre, base, bbox, cfg)
         etapa1.guardar_enderezada(nombre, placa, cfg)
 
-        # ── ETAPA intermedia: filtros (limpieza + agrandado) -> filtradas/ ──
-        placa_filtrada = etapa_filtros.filtrar(placa, cfg_filtros)
-        etapa_filtros.guardar(nombre, placa_filtrada, cfg_filtros)
+        # ── ETAPA intermedia: filtros (segun flag USAR_FILTROS) ──
+        if USAR_FILTROS:
+            entrada_seg = etapa_filtros.filtrar(placa, cfg_filtros)
+            etapa_filtros.guardar(nombre, entrada_seg, cfg_filtros)
+        else:
+            entrada_seg = placa   # enderezada cruda, sin filtros
 
-        # ── ETAPA 2: segmentacion U-Net (sobre la placa ya filtrada) -> crops ──
-        _, crops = etapa2.segmentar(placa_filtrada, modelo_seg)
+        # ── ETAPA 2: segmentacion U-Net -> crops ──
+        _, crops = etapa2.segmentar(entrada_seg, modelo_seg)
         etapa2.guardar(nombre, crops)
 
         # ── ETAPA 3: OCR (clasificador CNN) -> texto de la placa ──

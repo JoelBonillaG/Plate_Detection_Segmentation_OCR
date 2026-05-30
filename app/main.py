@@ -20,6 +20,11 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(DIR, "camara"))
 sys.path.insert(0, os.path.join(DIR, "pipeline"))
 
+# Flag de prueba: filtros a veces empeora el OCR (ver pipeline.py).
+# True  -> enderezada -> filtros -> segmentacion
+# False -> enderezada -> segmentacion (cruda, sin filtros)
+USAR_FILTROS = False
+
 from camara import iniciar
 import deteccion_carros as etapa0
 import deteccion_placas as etapa1
@@ -64,11 +69,14 @@ if __name__ == "__main__":
         # auditar: recorte con bbox + placa horizontal, antes de segmentar
         etapa1.guardar_deteccion(nombre, base, bbox, cfg)
         etapa1.guardar_enderezada(nombre, placa, cfg)
-        # ETAPA intermedia: filtros (limpieza + agrandado) -> filtradas/
-        placa_filtrada = etapa_filtros.filtrar(placa, cfg_filtros)
-        etapa_filtros.guardar(nombre, placa_filtrada, cfg_filtros)
+        # ETAPA intermedia: filtros (segun flag USAR_FILTROS)
+        if USAR_FILTROS:
+            entrada_seg = etapa_filtros.filtrar(placa, cfg_filtros)
+            etapa_filtros.guardar(nombre, entrada_seg, cfg_filtros)
+        else:
+            entrada_seg = placa   # enderezada cruda, sin filtros
         # ETAPA 2: segmentar caracteres -> crops
-        _, crops = etapa2.segmentar(placa_filtrada, modelo_seg)
+        _, crops = etapa2.segmentar(entrada_seg, modelo_seg)
         etapa2.guardar(nombre, crops)
         # ETAPA 3: OCR -> texto de la placa
         texto = etapa3.clasificar(crops, modelo_ocr, classes_ocr)
