@@ -17,6 +17,7 @@ test_resultados
 *venv
 *env
 mmtest
+Car detector.v1i.yolov11
 
 # Python
 __pycache__/
@@ -28,6 +29,7 @@ __pycache__/
 *.jpg
 *.jpeg
 *.png
+app/pipeline/ocr/salidas/*.txt
 # ...menos las fotos de entrada para pruebas (camara/capturas/)
 !app/camara/capturas/*.jpg
 !app/camara/capturas/*.jpeg
