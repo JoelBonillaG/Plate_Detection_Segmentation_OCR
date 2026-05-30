@@ -10,7 +10,10 @@ Cuando una placa cruza la zona, corre la cadena completa sobre ese frame:
 Mismos modelos y mismas etapas que el batch (pipeline.py).
 
 Ejecutar:
-    python main.py
+    python main.py                       # webcam por defecto (indice 0)
+    python main.py video.mp4             # archivo grabado (desarrollo)
+    python main.py http://192.168.x.x:4747/video   # celular (DroidCam/IP Webcam, demo)
+    python main.py 1                     # otra webcam por indice
 """
 
 import os
@@ -50,12 +53,13 @@ if __name__ == "__main__":
     print("Modelos cargados.")
 
     def al_capturar(nombre, frame):
+        # Devuelve el texto de la placa leida (o None) -> la camara lo guarda en datos.json.
         # ETAPA 0: detectar carro -> recorte (en memoria). Sin carro, no hay placa.
         if modelo_carros is not None:
             carro = etapa0.detectar_carro(modelo_carros, frame, cfg_carros)
             if carro is None:
                 print(f"  [SIN CARRO] {nombre}")
-                return
+                return None
             etapa0.guardar_deteccion(nombre, frame, carro, cfg_carros)   # auditar carro
             base = etapa0.recortar(frame, carro, cfg_carros.get("margen", 0.08))
         else:
@@ -65,7 +69,7 @@ if __name__ == "__main__":
         placa, bbox = etapa1.procesar_frame(modelo, base, cfg, return_bbox=True)
         if placa is None:
             print(f"  [SIN PLACA] {nombre}")
-            return
+            return None
         # auditar: recorte con bbox + placa horizontal, antes de segmentar
         etapa1.guardar_deteccion(nombre, base, bbox, cfg)
         etapa1.guardar_enderezada(nombre, placa, cfg)
@@ -82,7 +86,16 @@ if __name__ == "__main__":
         texto = etapa3.clasificar(crops, modelo_ocr, classes_ocr)
         etapa3.guardar_resultado(nombre, texto)
         print(f"  [OK] {nombre}: {len(crops)} crops -> '{texto}'")
+        return texto
+
+    # fuente de video: argumento de linea de comandos (default = webcam 0)
+    #   un numero  -> indice de webcam ; cualquier otra cosa -> ruta o URL
+    fuente = 0
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        fuente = int(arg) if arg.isdigit() else arg
 
     # en vivo: la camara solo dispara captura cuando una placa cruza la zona
     iniciar(detector=lambda frame: etapa1.detectar(modelo, frame, conf),
-            al_capturar=al_capturar)
+            al_capturar=al_capturar,
+            fuente=fuente)
