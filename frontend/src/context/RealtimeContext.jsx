@@ -20,6 +20,7 @@ const VIDEO_URL = import.meta.env.VITE_VIDEO_URL ?? `http://${window.location.ho
 function mapBackendEvent(raw) {
   return {
     id:                 raw.id ?? `EVT-${Date.now()}`,
+    db_id:              raw.db_id ?? raw.id,   // UUID real para llamadas PATCH
     plateOcr:           raw.placa_ocr,
     plateValidated:     raw.placa_validada ?? raw.placa_ocr,
     speed:              raw.velocidad,

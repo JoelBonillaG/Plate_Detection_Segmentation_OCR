@@ -17,7 +17,7 @@ from .database import (
 )
 from .mailer import EmailPayload, build_vehicle_notification_body, send_email
 from .realtime import get_current_frame, manager
-from .events_db import fetch_eventos, fetch_evento, _row_to_payload
+from .events_db import fetch_eventos, fetch_evento, _row_to_payload, approve_evento, reject_evento
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -126,6 +126,59 @@ def get_event(evento_id: str) -> dict:
     if not row:
         raise HTTPException(status_code=404, detail="Evento no encontrado")
     return _row_to_payload(row)
+
+
+# ── Aprobar / Rechazar evento ─────────────────────────────────────────────────
+
+class ApproveRequest(BaseModel):
+    placa_corregida: str | None = None
+    motivo: str | None = None
+
+
+@app.patch("/events/{evento_id}/approve")
+def approve_event(evento_id: str, body: ApproveRequest) -> dict:
+    """
+    Operador aprueba la sanción:
+    1. Actualiza estado_revision → 'aprobado'
+    2. Crea registro en notificaciones (si hay correo del propietario)
+    3. Envía el correo inmediatamente
+    """
+    try:
+        approve_evento(evento_id, body.placa_corregida, body.motivo)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Enviar notificación pendiente generada para este evento
+    sent = failed = 0
+    from .database import get_connection
+    from psycopg.rows import dict_row
+    try:
+        notifs = fetch_pending_notifications(limit=1)
+        # Filtrar solo la del evento aprobado
+        notifs = [n for n in notifs if str(n.get("evento_id")) == evento_id]
+        for n in notifs:
+            body_text = n.get("mensaje") or build_vehicle_notification_body(n)
+            try:
+                send_email(EmailPayload(to=n["correo_destino"], subject=n["asunto"], body=body_text))
+                mark_notification_sent(str(n["id"]))
+                sent += 1
+            except Exception as exc:
+                mark_notification_error(str(n["id"]), str(exc))
+                failed += 1
+    except Exception:
+        pass  # Si no hay SMTP configurado no falla el approve
+
+    return {"status": "approved", "email_sent": sent, "email_failed": failed}
+
+
+@app.patch("/events/{evento_id}/reject")
+def reject_event(evento_id: str, body: ApproveRequest) -> dict:
+    """Operador rechaza el evento."""
+    try:
+        reject_evento(evento_id, body.motivo)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "rejected"}
 
 
 # ── Notificaciones ────────────────────────────────────────────────────────────

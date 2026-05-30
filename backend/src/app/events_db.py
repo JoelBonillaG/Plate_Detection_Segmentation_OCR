@@ -249,10 +249,80 @@ def fetch_evento(evento_id: str) -> dict | None:
             return dict(row) if row else None
 
 
+def approve_evento(evento_id: str, placa_corregida: str | None, motivo: str | None) -> None:
+    """Aprueba la sanción: actualiza estado, crea notificación y encola envío."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Actualizar evento
+            if placa_corregida:
+                cur.execute(
+                    "UPDATE eventos SET estado_revision='aprobado', placa_validada=%s, revisado_at=NOW(), updated_at=NOW() WHERE id=%s",
+                    (placa_corregida.upper(), evento_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE eventos SET estado_revision='aprobado', revisado_at=NOW(), updated_at=NOW() WHERE id=%s",
+                    (evento_id,),
+                )
+
+            # Obtener datos para la notificación
+            cur.execute(
+                """
+                SELECT e.placa_validada, e.placa_ocr, e.velocidad, e.limite_velocidad,
+                       e.dias_sancion_sugeridos, e.tipo_evento,
+                       v.propietario_correo, v.propietario_nombre
+                FROM eventos e LEFT JOIN vehiculos v ON v.id = e.vehiculo_id
+                WHERE e.id = %s
+                """,
+                (evento_id,),
+            )
+            ev = cur.fetchone()
+            if ev and ev.get("propietario_correo"):
+                placa = ev.get("placa_validada") or ev.get("placa_ocr")
+                asunto = f"Notificación de infracción de tránsito — Placa {placa}"
+                exceso = float(ev["velocidad"]) - float(ev["limite_velocidad"])
+                mensaje = (
+                    f"Estimado/a {ev.get('propietario_nombre', 'propietario')},\n\n"
+                    f"El sistema de monitoreo vehicular de la Universidad Técnica de Ambato registró\n"
+                    f"una infracción de tránsito para el vehículo con placa {placa}.\n\n"
+                    f"  • Velocidad registrada : {ev['velocidad']} km/h\n"
+                    f"  • Límite permitido     : {ev['limite_velocidad']} km/h\n"
+                    f"  • Exceso               : +{exceso:.1f} km/h\n"
+                    f"  • Sanción sugerida     : {ev['dias_sancion_sugeridos']} día(s) de suspensión\n\n"
+                    f"Por favor comuníquese con la administración del campus para regularizar su situación.\n\n"
+                    f"Universidad Técnica de Ambato — Sistema de Monitoreo Vehicular\n"
+                )
+                if motivo:
+                    mensaje += f"\nObservación del operador: {motivo}\n"
+
+                cur.execute(
+                    """
+                    INSERT INTO notificaciones (evento_id, correo_destino, tipo_notificacion, asunto, mensaje)
+                    VALUES (%s, %s, 'infraccion', %s, %s)
+                    """,
+                    (evento_id, ev["propietario_correo"], asunto, mensaje),
+                )
+        conn.commit()
+
+
+def reject_evento(evento_id: str, motivo: str | None) -> None:
+    """Rechaza el evento — solo actualiza estado."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE eventos SET estado_revision='rechazado', observacion_admin=%s, revisado_at=NOW(), updated_at=NOW() WHERE id=%s",
+                (motivo, evento_id),
+            )
+        conn.commit()
+
+
 def _row_to_payload(row: dict) -> dict[str, Any]:
     """Convierte una fila de DB al formato EventPayload que el frontend espera."""
+    raw_id = str(row["id"])
+    display_id = f"EVT-{raw_id.replace('-','').upper()[:8]}"
     return {
-        "id": str(row["id"]),
+        "id":     display_id,
+        "db_id":  raw_id,          # UUID real, para llamadas API
         "placa_ocr":  row["placa_ocr"],
         "placa_validada": row["placa_validada"],
         "velocidad":  float(row["velocidad"]),

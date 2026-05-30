@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { useRealtime } from "./context/RealtimeContext.jsx";
 
+const API = import.meta.env.VITE_API_URL ?? `http://${window.location.hostname}:8000`;
+
 const NAV = [
   { id: "dashboard", label: "Dashboard",    icon: LayoutDashboard },
   { id: "events",    label: "Eventos",      icon: Car },
@@ -518,6 +520,98 @@ function EventHeroStrip({ event }) {
   );
 }
 
+/* ─── Human review box ───────────────────────────────────── */
+
+function HumanReviewBox({ event }) {
+  const [placa, setPlaca]   = useState(event.plateValidated ?? event.plateOcr);
+  const [motivo, setMotivo] = useState("");
+  const [status, setStatus] = useState("idle"); // idle | loading | ok | error
+  const [msg, setMsg]       = useState("");
+
+  // El db_id viene del backend (UUID real); si no hay, usa el id display
+  const dbId = event.db_id ?? event.id;
+
+  const call = async (action) => {
+    setStatus("loading");
+    setMsg("");
+    try {
+      const res = await fetch(`${API}/events/${dbId}/${action}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          placa_corregida: placa !== event.plateOcr ? placa : null,
+          motivo: motivo || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? "Error del servidor");
+      setStatus("ok");
+      if (action === "approve") {
+        setMsg(data.email_sent > 0
+          ? `Sanción aprobada. Correo enviado a ${event.vehicle?.ownerEmail}.`
+          : "Sanción aprobada. Correo en cola (verificar SMTP en .env)."
+        );
+      } else {
+        setMsg("Evento rechazado correctamente.");
+      }
+    } catch (e) {
+      setStatus("error");
+      setMsg(e.message);
+    }
+  };
+
+  if (status === "ok") {
+    return (
+      <div className="human-review-box">
+        <div className="human-review-header" style={{ background: "#16a34a" }}>
+          <Check size={16} /> Acción registrada
+        </div>
+        <div className="human-review-body">
+          <p style={{ fontSize: ".875rem", color: "#15803d", fontWeight: 600 }}>{msg}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="human-review-box">
+      <div className="human-review-header">
+        <ShieldAlert size={16} /> Revisión humana requerida
+      </div>
+      <div className="human-review-body">
+        <div className="form-field">
+          <label className="form-label">Placa validada</label>
+          <input className="form-input" value={placa} onChange={e => setPlaca(e.target.value.toUpperCase())} />
+        </div>
+        <div className="form-field">
+          <label className="form-label">Motivo (opcional)</label>
+          <textarea className="form-textarea" placeholder="Registrar motivo si se modifica…"
+            value={motivo} onChange={e => setMotivo(e.target.value)} />
+        </div>
+        {status === "error" && (
+          <p style={{ fontSize: ".78rem", color: "var(--uta-red)", margin: 0 }}>{msg}</p>
+        )}
+        <div className="review-actions">
+          <button
+            className="btn btn-approve btn-md"
+            disabled={status === "loading"}
+            onClick={() => call("approve")}
+          >
+            <Check size={15} /> {status === "loading" ? "Enviando…" : "Aprobar y notificar"}
+          </button>
+          <button
+            className="btn btn-reject btn-md"
+            disabled={status === "loading"}
+            onClick={() => call("reject")}
+          >
+            <X size={15} /> Rechazar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Tab: Resumen ───────────────────────────────────────── */
 
 function ResumenTab({ event }) {
@@ -605,25 +699,7 @@ function ResumenTab({ event }) {
           </div>
 
           {event.reviewStatus === "pendiente" && (
-            <div className="human-review-box">
-              <div className="human-review-header">
-                <ShieldAlert size={16} /> Revisión humana requerida
-              </div>
-              <div className="human-review-body">
-                <div className="form-field">
-                  <label className="form-label">Placa validada</label>
-                  <input className="form-input" defaultValue={event.plateValidated} />
-                </div>
-                <div className="form-field">
-                  <label className="form-label">Motivo de corrección</label>
-                  <textarea className="form-textarea" placeholder="Registrar motivo si se modifica…" />
-                </div>
-                <div className="review-actions">
-                  <button className="btn btn-approve btn-md"><Check size={15} /> Aprobar</button>
-                  <button className="btn btn-reject btn-md"><X size={15} /> Rechazar</button>
-                </div>
-              </div>
-            </div>
+            <HumanReviewBox event={event} />
           )}
         </div>
       </div>
