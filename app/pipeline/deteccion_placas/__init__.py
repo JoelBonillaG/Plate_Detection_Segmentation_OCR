@@ -20,7 +20,6 @@ from .deteccion import cargar_yolo, detectar
 from .enderezado import recortar, enderezar
 
 _AQUI = os.path.dirname(os.path.abspath(__file__))
-_APP  = os.path.normpath(os.path.join(_AQUI, "..", ".."))   # app/
 
 
 def _ruta_aqui(p):
@@ -29,12 +28,9 @@ def _ruta_aqui(p):
 
 
 def cargar_config():
-    """Config global (app/config.json) + especifica de la etapa; la especifica gana."""
-    with open(os.path.join(_APP, "config.json"), encoding="utf-8") as f:
-        glob = json.load(f)
+    """Config de la etapa (deteccion_placas/config.json): modelo, conf, rutas."""
     with open(os.path.join(_AQUI, "config.json"), encoding="utf-8") as f:
-        esp = json.load(f)
-    cfg = {**glob, **esp}
+        cfg = json.load(f)
     cfg["detecciones"] = _ruta_aqui(cfg.get("detecciones", "detecciones"))
     cfg["enderezadas"] = _ruta_aqui(cfg.get("enderezadas", "enderezadas"))
     return cfg

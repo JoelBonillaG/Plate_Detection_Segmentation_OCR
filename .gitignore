@@ -23,3 +23,12 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .ipynb_checkpoints/
+
+# Imagenes: ignora todas (salidas del pipeline + graficas de entreno)...
+*.jpg
+*.jpeg
+*.png
+# ...menos las fotos de entrada para pruebas (camara/capturas/)
+!app/camara/capturas/*.jpg
+!app/camara/capturas/*.jpeg
+!app/camara/capturas/*.png
