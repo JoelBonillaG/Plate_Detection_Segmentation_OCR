@@ -5,7 +5,7 @@ Recibe los crops de caracter que dejo la segmentacion (U-Net) y devuelve el
 texto de la placa. Envuelve test_plate.py (script CLI) en funciones reusables:
 reusa prepare_crop (mismo preprocesado del entrenamiento) y load_classes.
 
-API publica (la usa pipeline.py):
+API publica (la usa cadena.py):
     cargar_modelo(ruta=None, classes_path=None) -> (modelo, classes)
     clasificar(crops, modelo, classes)          -> texto de la placa (str)
     guardar_resultado(nombre, texto, salidas=None) -> escribe salidas/<nombre>.txt

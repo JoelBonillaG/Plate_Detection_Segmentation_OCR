@@ -4,7 +4,7 @@ ETAPA intermedia del pipeline: filtros (limpieza + agrandado).
 Entrada: placa enderezada (BGR) que dejo la etapa 1.
 Salida : placa gris, limpia, agrandada y nitida, lista para el OCR.
 
-API publica (la usa pipeline.py / main.py):
+API publica (la usa cadena.py / main.py):
     cargar_config()                               -> dict de config de la etapa
     filtrar(placa_bgr, cfg=None)                  -> placa gris filtrada
     guardar_filtrada(nombre, placa_bgr, cfg=None) -> guarda filtradas/<nombre>.jpg

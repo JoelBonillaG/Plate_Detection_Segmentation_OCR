@@ -1,7 +1,7 @@
 """
 ETAPA 1 del pipeline: deteccion de placa + enderezado.
 
-API publica (lo que usa pipeline.py):
+API publica (lo que usa cadena.py):
     cargar_config()                  -> dict con la config de esta etapa
     cargar_modelo(cfg)               -> modelo YOLO listo
     procesar_frame(modelo, frame, cfg) -> placa enderezada (BGR) o None

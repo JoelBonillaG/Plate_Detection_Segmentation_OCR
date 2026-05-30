@@ -2,13 +2,14 @@
 ETAPA 2 del pipeline: segmentacion de caracteres con el U-Net.
 
 Envuelve predict_char_segmentation.py (script CLI) en funciones reusables para
-que el pipeline le pase la placa YA FILTRADA (gris) en memoria, sin pasar por
+que la cadena le pase la placa YA FILTRADA (gris) en memoria, sin pasar por
 disco. Reusa mask_to_boxes (mascara -> cajas) tal cual.
 
-API publica (la usa pipeline.py):
+API publica (la usa cadena.py):
     cargar_modelo(ruta=None)                       -> modelo keras (cargar 1 vez)
     segmentar(imagen, modelo, cfg=None)            -> (cajas, crops) izq->der
-    guardar_crops(nombre, imagen, modelo, cfg=None)-> guarda segmentadas/<nombre>/NN.png
+    guardar(nombre, crops, cfg=None)               -> guarda segmentadas/<nombre>/NN.png
+    guardar_crops(nombre, imagen, modelo, cfg=None)-> segmenta y guarda (standalone)
 """
 
 import os

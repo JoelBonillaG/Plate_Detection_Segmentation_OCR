@@ -1,7 +1,8 @@
 # Pipeline de reconocimiento de placas
 
 Cadena por imagen: **foto → placa → caracteres → texto**. Cada etapa es una
-carpeta-paquete con su API; `pipeline.py` las orquesta en modo batch.
+carpeta-paquete con su API; `cadena.py` encadena las etapas sobre un frame y
+`batch.py` las orquesta en modo batch (recorre la carpeta de capturas).
 
 ```
 cámara/imread (BGR)
@@ -116,7 +117,7 @@ asumen **carácter oscuro / fondo claro** → el filtro entrega justo eso.
 
 ```bash
 # pipeline completo (batch): lee camara/capturas/, hace placa→filtros→seg→OCR
-python pipeline/pipeline.py
+python pipeline/batch.py
 
 # en vivo (cámara): captura al cruzar la zona y corre la misma cadena
 python main.py

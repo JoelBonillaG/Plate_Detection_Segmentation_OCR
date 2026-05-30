@@ -1,14 +1,17 @@
 """
 ETAPA 0 del pipeline: deteccion de vehiculos.
 
-Por ahora SOLO auditoria: detecta el carro mas confiable del frame y guarda
-    - el frame con la caja dibujada       -> detecciones/<nombre>.jpg
-    - el recorte (con margen) del carro    -> detecciones/<nombre>_carro.jpg
+Primer eslabon de la cadena: detecta el carro mas confiable del frame, lo recorta
+(con margen) y entrega ese recorte a la ETAPA 1 (placas). Correr la red de placas
+DENTRO del carro da zoom -> placa mas grande -> mejor OCR, y menos falsos
+positivos del fondo. Si el modelo de carros no esta entrenado, la cadena hace
+fallback: corre la placa sobre el frame completo (ver cadena.py).
 
-El recorte es la materia prima para, en el futuro, correr la red de placas
-DENTRO del carro (zoom -> placa mas grande -> mejor OCR). Aun NO conectado.
+Tambien guarda auditoria en disco:
+    - el frame con la caja dibujada        -> detecciones/<nombre>.jpg
+    - el recorte (con margen) del carro     -> detecciones/<nombre>_carro.jpg
 
-API publica:
+API publica (la usa cadena.py):
     cargar_config()                       -> dict con la config de esta etapa
     cargar_modelo(cfg)                    -> modelo YOLO listo
     detectar_carro(modelo, frame, cfg)    -> caja (x1,y1,x2,y2) o None
