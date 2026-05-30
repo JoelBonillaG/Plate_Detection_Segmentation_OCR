@@ -62,11 +62,30 @@ export const events = [
     audit: [
       {
         user: "Administrador",
+        action: "Evento recibido",
         field: "estado_revision",
         previousValue: "pendiente",
         newValue: "pendiente",
         reason: "Evento pendiente de revision humana",
         dateTime: "2026-05-30 11:42:11",
+      },
+      {
+        user: "Sistema automatico",
+        action: "Analisis difuso completado",
+        field: "nivel_riesgo",
+        previousValue: "sin clasificar",
+        newValue: "alto",
+        reason: "Exceso moderado con reincidencia y OCR confiable",
+        dateTime: "2026-05-30 11:42:10",
+      },
+      {
+        user: "Camara principal",
+        action: "Evidencia capturada",
+        field: "imagen_frame",
+        previousValue: "sin evidencia",
+        newValue: "frame y crop guardados",
+        reason: "Vehiculo cruzo zona de control",
+        dateTime: "2026-05-30 11:42:09",
       },
     ],
   },
@@ -103,7 +122,17 @@ export const events = [
       suggestedPenalty: "sin sancion",
       activatedRules: ["Si velocidad es normal y no hay reincidencia, entonces evento normal"],
     },
-    audit: [],
+    audit: [
+      {
+        user: "Sistema automatico",
+        action: "Felicitacion enviada",
+        field: "estado_notificacion",
+        previousValue: "pendiente",
+        newValue: "enviado",
+        reason: "Evento normal sin revision humana",
+        dateTime: "2026-05-30 11:41:35",
+      },
+    ],
   },
   {
     id: "EVT-00016",
@@ -138,7 +167,17 @@ export const events = [
       suggestedPenalty: "sin sancion",
       activatedRules: ["Si velocidad es normal, entonces no requiere revision humana"],
     },
-    audit: [],
+    audit: [
+      {
+        user: "Sistema automatico",
+        action: "Evento archivado",
+        field: "estado_revision",
+        previousValue: "pendiente",
+        newValue: "automatica",
+        reason: "Velocidad dentro del limite",
+        dateTime: "2026-05-30 11:41:03",
+      },
+    ],
   },
   {
     id: "EVT-00015",
@@ -176,7 +215,17 @@ export const events = [
         "Si OCR es confiable y riesgo es critico, entonces requiere aprobacion humana",
       ],
     },
-    audit: [],
+    audit: [
+      {
+        user: "Sistema automatico",
+        action: "Alerta critica generada",
+        field: "nivel_riesgo",
+        previousValue: "sin clasificar",
+        newValue: "critico",
+        reason: "Exceso severo con reincidencia alta",
+        dateTime: "2026-05-30 11:40:42",
+      },
+    ],
   },
 ];
 
