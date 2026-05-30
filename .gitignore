@@ -34,3 +34,11 @@ app/pipeline/ocr/salidas/*.txt
 !app/camara/capturas/*.jpg
 !app/camara/capturas/*.jpeg
 !app/camara/capturas/*.png
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite-cache/
+frontend/vite-dev.log
+frontend/vite-dev.err
+!frontend/public/mock/*.png
