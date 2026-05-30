@@ -43,6 +43,10 @@ MIN_NITIDEZ   = 40
 DISTANCIA_M   = 5.0
 FPS_FALLBACK  = 30.0   # si la fuente no reporta FPS
 
+# detectar cada N frames (1 = cada frame). Subir a 2-3 si va lento (mas fluido,
+# timing de velocidad un poco mas grueso). Reusa el ultimo bbox entre detecciones.
+INFERENCIA_CADA = 1
+
 # modo calibracion: sliders + arrastrar lineas + overlay de numeros
 CALIBRAR      = True
 
@@ -230,6 +234,8 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     if not es_archivo:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH,  VENTANA_W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VENTANA_H)
+        # buffer minimo: evita que el stream del celu acumule lag (frames viejos)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     os.makedirs(carpeta_captura, exist_ok=True)
 
@@ -244,7 +250,6 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     capturas_guardadas = 0
     bbox        = None
     n_frame     = 0
-    INFERENCIA_CADA = 1  # GPU: detectar en cada frame (YOLO11n ~4ms)
 
     print("Fuente abierta. Q=salir.", "Calibracion ON (s=guardar config)." if CALIBRAR else "")
     print(f"Capturas -> {carpeta_captura}")
@@ -281,11 +286,14 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         # --- dibujar ---
         dibujar_lineas(frame, zona, calibrar=CALIBRAR)
 
+        # dibujar la placa SOLO si su centro cae dentro de la zona ENTRA-SALE
         if bbox is not None:
             x1, y1, x2, y2 = bbox
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, "Placa", (x1, y1 - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            xc, yc = (x1 + x2) / 2, (y1 + y2) / 2
+            if zona.punto_en_zona(xc, yc, VENTANA_W, VENTANA_H):
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, "Placa", (x1, y1 - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
         dibujar_velocidad(frame, zona)   # velocidad: siempre visible (demo incluida)
 

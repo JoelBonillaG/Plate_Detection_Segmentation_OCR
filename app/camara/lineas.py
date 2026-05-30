@@ -102,6 +102,11 @@ class ZonaDeteccion:
         dentro_s = _signo(xc, yc, s) * _signo(*me, s) > 0   # mismo lado que ENTRA
         return dentro_e, dentro_s
 
+    def punto_en_zona(self, px, py, w, h):
+        """True si el punto (px,py) cae entre las dos lineas (dentro de la zona)."""
+        de, ds = self._dentro(px, py, w, h)
+        return de and ds
+
     # ── logica de cruce ───────────────────────────────────────────────────
 
     def actualizar(self, frame, bbox_pixels, t=None):
