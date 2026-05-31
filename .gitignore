@@ -25,15 +25,16 @@ __pycache__/
 *.egg-info/
 .ipynb_checkpoints/
 
-# Imagenes: ignora todas (salidas del pipeline + graficas de entreno)...
+# Imagenes: ignora todas (salidas del pipeline + graficas de entreno)
 *.jpg
 *.jpeg
 *.png
-app/pipeline/ocr/salidas/*.txt
-# ...menos las fotos de entrada para pruebas (camara/capturas/)
-!app/camara/capturas/*.jpg
-!app/camara/capturas/*.jpeg
-!app/camara/capturas/*.png
+backend/src/vision/pipeline/ocr/salidas/**
+storage/**
+
+# Capturas en vivo: salida del sistema (carpetas por carro + datos.json), no versionar
+backend/src/vision/camara/capturas/**
+*mp4
 
 # Frontend
 frontend/node_modules/

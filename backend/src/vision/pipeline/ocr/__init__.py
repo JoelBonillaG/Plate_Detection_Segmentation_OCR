@@ -34,16 +34,19 @@ def cargar_modelo(ruta=None, classes_path=None):
     return modelo, classes
 
 
-def clasificar(crops, modelo, classes):
-    """Lista de crops (gris) -> texto de la placa. Clasifica cada crop y concatena."""
+def clasificar(crops, modelo, classes, return_conf=False):
+    """Lista de crops (gris) -> texto de la placa. Clasifica cada crop y concatena.
+    Con return_conf=True devuelve (texto, confianzas) donde confianzas es la lista
+    del softmax maximo de cada caracter (alineada con el texto)."""
     if not crops:
-        return ""
+        return ("", []) if return_conf else ""
 
     th = int(modelo.input_shape[1])
     tw = int(modelo.input_shape[2])
     canales = int(modelo.input_shape[3]) if len(modelo.input_shape) == 4 else 1
 
     texto = ""
+    confianzas = []
     for crop in crops:
         if crop is None or crop.size == 0:
             continue
@@ -58,7 +61,8 @@ def clasificar(crops, modelo, classes):
 
         pred = modelo.predict(proc, verbose=0)[0]
         texto += classes[int(np.argmax(pred))]
-    return texto
+        confianzas.append(float(np.max(pred)))
+    return (texto, confianzas) if return_conf else texto
 
 
 def guardar_resultado(nombre, texto, salidas=None):

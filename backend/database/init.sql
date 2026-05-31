@@ -85,8 +85,10 @@ CREATE TABLE IF NOT EXISTS evento_vision_computadora (
   placa_detectada BOOLEAN NOT NULL DEFAULT FALSE,
   confianza_placa NUMERIC(5,4) CHECK (confianza_placa IS NULL OR (confianza_placa >= 0 AND confianza_placa <= 1)),
   bbox_placa JSONB,
+  ruta_placa_detectada TEXT,
   ruta_placa_enderezada TEXT,
   ruta_placa_filtrada TEXT,
+  ruta_segmentacion TEXT,
   caracteres_segmentados INTEGER CHECK (caracteres_segmentados IS NULL OR caracteres_segmentados >= 0),
   resultado_ocr VARCHAR(12),
   confianza_ocr NUMERIC(5,4) CHECK (confianza_ocr IS NULL OR (confianza_ocr >= 0 AND confianza_ocr <= 1)),
@@ -157,128 +159,3 @@ DROP TRIGGER IF EXISTS trg_eventos_updated_at ON eventos;
 CREATE TRIGGER trg_eventos_updated_at
 BEFORE UPDATE ON eventos
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-INSERT INTO usuarios_sistema (nombre, correo, rol)
-VALUES ('Administrador', 'admin@uni.edu', 'administrador')
-ON CONFLICT (correo) DO NOTHING;
-
-WITH vehiculo_seed AS (
-  INSERT INTO vehiculos (
-    placa,
-    marca,
-    modelo,
-    color,
-    propietario_nombre,
-    propietario_correo,
-    propietario_telefono
-  )
-  VALUES (
-    'ABC-1234',
-    'Renault',
-    'Logan',
-    'Gris',
-    'Carlos Andrade',
-    'c.andrade@uni.edu',
-    '+593999000111'
-  )
-  ON CONFLICT (placa) DO UPDATE SET placa = EXCLUDED.placa
-  RETURNING id
-),
-evento_seed AS (
-  INSERT INTO eventos (
-    vehiculo_id,
-    placa_ocr,
-    placa_validada,
-    velocidad,
-    limite_velocidad,
-    tipo_evento,
-    estado_revision,
-    estado_notificacion,
-    nivel_riesgo,
-    dias_sancion_sugeridos,
-    confianza_ocr,
-    reincidencias,
-    imagen_frame,
-    imagen_placa,
-    fecha_hora
-  )
-  SELECT
-    id,
-    'ABC-1234',
-    'ABC-1234',
-    58,
-    50,
-    'infraccion',
-    'pendiente',
-    'pendiente',
-    'alto',
-    3,
-    0.94,
-    2,
-    'storage/eventos/EVT-00018/frame.png',
-    'storage/eventos/EVT-00018/placa.png',
-    NOW()
-  FROM vehiculo_seed
-  RETURNING id
-)
-INSERT INTO evento_vision_computadora (
-  evento_id,
-  vehiculo_detectado,
-  confianza_vehiculo,
-  bbox_vehiculo,
-  placa_detectada,
-  confianza_placa,
-  bbox_placa,
-  ruta_placa_enderezada,
-  ruta_placa_filtrada,
-  caracteres_segmentados,
-  resultado_ocr,
-  confianza_ocr,
-  metadata
-)
-SELECT
-  id,
-  TRUE,
-  0.97,
-  '{"x":184,"y":84,"w":610,"h":342}'::JSONB,
-  TRUE,
-  0.95,
-  '{"x":408,"y":306,"w":132,"h":54}'::JSONB,
-  'storage/eventos/EVT-00018/placa_enderezada.png',
-  'storage/eventos/EVT-00018/placa_filtrada.png',
-  7,
-  'ABC-1234',
-  0.94,
-  '{"pipeline":"carro -> placa -> filtros -> segmentacion -> OCR"}'::JSONB
-FROM evento_seed
-ON CONFLICT (evento_id) DO NOTHING;
-
-INSERT INTO evento_sistema_difuso (
-  evento_id,
-  exceso_velocidad,
-  pertenencia_velocidad,
-  pertenencia_reincidencia,
-  pertenencia_confianza_ocr,
-  nivel_riesgo,
-  dias_sancion_sugeridos,
-  reglas_activadas,
-  salida_crisp
-)
-SELECT
-  id,
-  8,
-  '{"normal":0.00,"moderado":0.64,"severo":0.12}'::JSONB,
-  '{"sin_reincidencia":0.00,"reincidente":0.58}'::JSONB,
-  '{"baja":0.00,"media":0.10,"alta":0.94}'::JSONB,
-  'alto',
-  3,
-  '[
-    "Si exceso es moderado y OCR es confiable, entonces riesgo es medio-alto",
-    "Si existe reincidencia y exceso es moderado, entonces sugerir sancion"
-  ]'::JSONB,
-  0.74
-FROM eventos
-WHERE placa_ocr = 'ABC-1234'
-ORDER BY created_at DESC
-LIMIT 1
-ON CONFLICT (evento_id) DO NOTHING;

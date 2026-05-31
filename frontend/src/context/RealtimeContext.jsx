@@ -11,11 +11,17 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useReducer, useRef } from "react";
 import { wsService } from "../services/ws";
-import { events as MOCK_EVENTS, systemStatus as MOCK_STATUS } from "../mocks/mockData";
 
-const VIDEO_URL = import.meta.env.VITE_VIDEO_URL ?? `http://${window.location.hostname}:8000/api/cameras/main/stream`;
+const API_BASE  = import.meta.env.VITE_API_URL ?? `http://${window.location.hostname}:8000`;
+const VIDEO_URL = import.meta.env.VITE_VIDEO_URL ?? `${API_BASE}/api/cameras/main/stream`;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+// ruta relativa de storage -> URL absoluta servida por la API (/static). null si no hay.
+const staticUrl = p => (p ? `${API_BASE}/static/${p}` : null);
+
+// Postgres NUMERIC llega como string ("0.7743"); normaliza a number o null.
+const num = v => (v === null || v === undefined || v === "" ? null : Number(v));
 
 function mapBackendEvent(raw) {
   return {
@@ -30,7 +36,7 @@ function mapBackendEvent(raw) {
     notificationStatus: raw.estado_notificacion,
     riskLevel:          raw.nivel_riesgo,
     suggestedPenaltyDays: raw.dias_sancion_sugeridos ?? 0,
-    ocrConfidence:      raw.confianza_ocr,
+    ocrConfidence:      num(raw.confianza_ocr),
     recurrenceCount:    raw.reincidencias ?? 0,
     dateTime:           raw.fecha_hora?.replace("T", " ").slice(0, 19) ?? new Date().toISOString().replace("T", " ").slice(0, 19),
     vehicle: {
@@ -41,27 +47,34 @@ function mapBackendEvent(raw) {
       ownerEmail: raw.vehiculo?.propietario_correo  ?? "—",
     },
     images: {
-      // backend serves static files under /static/
-      frame: raw.imagen_frame ? `http://${window.location.hostname}:8000/static/${raw.imagen_frame}` : "/mock/principal.png",
-      plate: raw.imagen_placa ? `http://${window.location.hostname}:8000/static/${raw.imagen_placa}` : "/mock/placa_sola.png",
+      // backend sirve archivos estaticos bajo /static/. null = no disponible.
+      frame:         staticUrl(raw.imagen_frame),
+      plate:         staticUrl(raw.imagen_placa),
+      plateDetected: staticUrl(raw.vision?.ruta_placa_detectada),
+      plateStraight: staticUrl(raw.vision?.ruta_placa_enderezada) ?? staticUrl(raw.imagen_placa),
+      plateFiltered: staticUrl(raw.vision?.ruta_placa_filtrada),
+      segmentation:  staticUrl(raw.vision?.ruta_segmentacion),
     },
     computerVision: {
       vehicleDetection: {
-        confidence: raw.vision?.confianza_vehiculo ?? 0.95,
+        confidence: num(raw.vision?.confianza_vehiculo),
         bbox: raw.vision?.bbox_vehiculo
           ? `x:${raw.vision.bbox_vehiculo.x}, y:${raw.vision.bbox_vehiculo.y}, w:${raw.vision.bbox_vehiculo.w}, h:${raw.vision.bbox_vehiculo.h}`
           : "—",
       },
       plateDetection: {
-        confidence: raw.vision?.confianza_placa ?? 0.92,
+        confidence: num(raw.vision?.confianza_placa),
         bbox: raw.vision?.bbox_placa
           ? `x:${raw.vision.bbox_placa.x}, y:${raw.vision.bbox_placa.y}, w:${raw.vision.bbox_placa.w}, h:${raw.vision.bbox_placa.h}`
           : "—",
       },
-      rectification: raw.vision?.ruta_placa_enderezada ?? "—",
-      filters:       raw.vision?.metadata?.filtros ?? "—",
-      segmentation:  raw.vision?.caracteres_segmentados ? `${raw.vision.caracteres_segmentados} caracteres` : "—",
-      ocr:           raw.vision?.resultado_ocr ?? raw.placa_ocr,
+      usoFiltros:            raw.vision?.metadata?.filtros === "activos",
+      caracteresSegmentados: raw.vision?.caracteres_segmentados ?? 0,
+      ocr:                   raw.vision?.resultado_ocr ?? raw.placa_ocr,
+      // [{ ch, conf }] confianza real por caracter (softmax del OCR)
+      ocrPerChar: (raw.vision?.ocr_por_caracter ?? []).map(c => ({
+        ch: c.caracter, conf: num(c.confianza),
+      })),
     },
     fuzzySystem: {
       speedExcess:         raw.fuzzy?.exceso_velocidad ?? 0,
@@ -87,9 +100,9 @@ function mapBackendEvent(raw) {
 
 const INIT = {
   connected: false,
-  systemStatus: MOCK_STATUS,
-  latestEvent:  MOCK_EVENTS[0],
-  events:       MOCK_EVENTS,
+  systemStatus: { system: "Conectando…", camera: "—", backend: "—", fps: 0, currentTime: "—" },
+  latestEvent:  null,
+  events:       [],   // sin mocks: se llena con eventos reales del WebSocket
 };
 
 function reducer(state, action) {
@@ -108,6 +121,12 @@ function reducer(state, action) {
           currentTime: action.data.current_time ?? state.systemStatus.currentTime,
         },
       };
+
+    case "HYDRATE": {
+      // historial inicial desde GET /api/events (eventos reales ya persistidos)
+      const events = action.events.map(mapBackendEvent);
+      return { ...state, events, latestEvent: events[0] ?? null };
+    }
 
     case "EVENT": {
       const ev = mapBackendEvent(action.data);
@@ -130,6 +149,22 @@ const Ctx = createContext(null);
 
 export function RealtimeProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, INIT);
+
+  // historial inicial: consume GET /api/events una vez al montar (eventos reales).
+  useEffect(() => {
+    let vivo = true;
+    fetch(`${API_BASE}/api/events?limit=50`)
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(data => {
+        // el endpoint devuelve un array plano; tolera tambien {events:[...]}
+        const list = Array.isArray(data) ? data : data?.events;
+        if (vivo && Array.isArray(list)) {
+          dispatch({ type: "HYDRATE", events: list });
+        }
+      })
+      .catch(() => { /* API caida -> queda vacio hasta que llegue un evento por WS */ });
+    return () => { vivo = false; };
+  }, []);
 
   useEffect(() => {
     wsService.connect();

@@ -118,9 +118,15 @@ def hacer_al_capturar(modelos):
         placa_str = texto.upper().strip() or "DESCONOCIDA"
         bbox_v = bbox_dict(resultado.carro_bbox)
         bbox_p = bbox_dict(resultado.placa_bbox)
-        conf_v = 0.95 if bbox_v else None
-        conf_p = 0.92 if bbox_p else None
-        conf_ocr = min(float(len(resultado.crops)) / 7.0, 1.0) if resultado.crops else 0.0
+        # confianzas REALES del pipeline (YOLO carro/placa, softmax OCR por caracter)
+        conf_v = resultado.conf_vehiculo
+        conf_p = resultado.conf_placa
+        conf_ocr = float(resultado.conf_ocr or 0.0)
+        # [(caracter, confianza), ...] -> lista de dicts serializable
+        ocr_por_caracter = [
+            {"caracter": ch, "confianza": round(float(c), 4)}
+            for ch, c in (resultado.ocr_por_caracter or [])
+        ]
 
         try:
             reincidencias = count_reincidencias(placa_str)
@@ -136,7 +142,13 @@ def hacer_al_capturar(modelos):
 
         evento_id_full = f"EVT-{str(uuid.uuid4())[:8].upper()}"
         ruta_frame = guardar_frame(evento_id_full, "frame.jpg", frame)
-        ruta_placa = guardar_frame(evento_id_full, "placa.jpg", resultado.placa)
+        ruta_placa = guardar_frame(evento_id_full, "placa.jpg", resultado.placa)  # enderezada
+        # recorte CRUDO de la placa (antes de enderezar)
+        ruta_placa_detectada = None
+        if resultado.placa_crop is not None and resultado.placa_crop.size:
+            ruta_placa_detectada = guardar_frame(
+                evento_id_full, "placa_detectada.jpg", resultado.placa_crop)
+        # placa filtrada (solo si paso por filtros)
         ruta_filtrada = None
         if resultado.uso_filtros and resultado.entrada_segmentacion is not None:
             ruta_filtrada = guardar_frame(
@@ -144,6 +156,11 @@ def hacer_al_capturar(modelos):
                 "placa_filtrada.jpg",
                 resultado.entrada_segmentacion,
             )
+        # visualizacion de la segmentacion (placa con las cajas de caracteres)
+        ruta_segmentacion = None
+        if resultado.seg_overlay is not None and resultado.seg_overlay.size:
+            ruta_segmentacion = guardar_frame(
+                evento_id_full, "segmentacion.jpg", resultado.seg_overlay)
 
         payload = {
             "id": evento_id_full,
@@ -171,15 +188,19 @@ def hacer_al_capturar(modelos):
                 "bbox_vehiculo": bbox_v,
                 "confianza_placa": conf_p,
                 "bbox_placa": bbox_p,
+                "ruta_placa_detectada": ruta_placa_detectada,
                 "ruta_placa_enderezada": ruta_placa,
                 "ruta_placa_filtrada": ruta_filtrada,
+                "ruta_segmentacion": ruta_segmentacion,
                 "caracteres_segmentados": len(resultado.crops),
                 "resultado_ocr": placa_str,
                 "confianza_ocr": conf_ocr,
+                "ocr_por_caracter": ocr_por_caracter,
                 "metadata": {
                     "pipeline": "cadena.py",
                     "captura": nombre,
                     "filtros": "activos" if resultado.uso_filtros else "omitidos",
+                    "ocr_por_caracter": ocr_por_caracter,
                 },
             },
             "fuzzy": {
@@ -236,8 +257,10 @@ def hacer_al_capturar(modelos):
                     placa_detectada=resultado.placa_bbox is not None,
                     confianza_placa=conf_p,
                     bbox_placa=bbox_p,
+                    ruta_placa_detectada=ruta_placa_detectada,
                     ruta_placa_enderezada=ruta_placa,
                     ruta_placa_filtrada=ruta_filtrada,
+                    ruta_segmentacion=ruta_segmentacion,
                     caracteres_segmentados=len(resultado.crops),
                     resultado_ocr=placa_str,
                     confianza_ocr=conf_ocr,

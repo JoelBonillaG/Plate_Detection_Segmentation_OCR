@@ -14,6 +14,8 @@ import os
 import sys
 from dataclasses import dataclass
 
+import cv2
+
 # permitir importar los paquetes de las etapas (mismo dir que este archivo)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import deteccion_carros as etapa0
@@ -120,12 +122,18 @@ def detectar_placa_en_vivo(frame, m):
 class ResultadoFrame:
     """Resultado completo de procesar un frame, para integraciones web/DB."""
     texto: str
-    placa: object
+    placa: object                       # placa enderezada (BGR)
     crops: list
     carro_bbox: object = None
     placa_bbox: object = None
     entrada_segmentacion: object = None
     uso_filtros: bool = False
+    placa_crop: object = None           # recorte CRUDO de la placa (antes de enderezar)
+    seg_overlay: object = None          # entrada de segmentacion con las cajas dibujadas
+    conf_vehiculo: float = None         # confianza YOLO del carro
+    conf_placa: float = None            # confianza YOLO de la placa
+    conf_ocr: float = 0.0               # promedio de confianza por caracter
+    ocr_por_caracter: list = None       # [(caracter, confianza), ...]
 
 
 def procesar_frame_detallado(nombre, frame, m):
@@ -135,8 +143,10 @@ def procesar_frame_detallado(nombre, frame, m):
     """
     # ETAPA 0: detectar carro -> recorte (en memoria). Sin carro, no hay placa.
     carro_bbox = None
+    conf_v = None
     if m.modelo_carros is not None:
-        carro_bbox = etapa0.detectar_carro(m.modelo_carros, frame, m.cfg_carros)
+        carro_bbox, conf_v = etapa0.detectar_carro(
+            m.modelo_carros, frame, m.cfg_carros, return_conf=True)
         if carro_bbox is None:
             print(f"  [SIN CARRO] {nombre}")
             return None
@@ -145,11 +155,15 @@ def procesar_frame_detallado(nombre, frame, m):
     else:
         base = frame
 
-    # ETAPA 1: detectar + recortar + enderezar -> placa horizontal.
-    placa, bbox = etapa1.procesar_frame(m.modelo, base, m.cfg, return_bbox=True)
-    if placa is None:
+    # ETAPA 1: detectar (con confianza) -> recortar (crudo) -> enderezar (horizontal).
+    bbox, conf_p = etapa1.detectar(m.modelo, base, m.cfg.get("conf_min", 0.25),
+                                   return_conf=True)
+    if bbox is None:
         print(f"  [SIN PLACA] {nombre}")
         return None
+    placa_crop = etapa1.recortar(base, bbox, m.cfg.get("margen", 0.08))   # crudo
+    placa = etapa1.enderezar(placa_crop, m.cfg.get("ancho_placa", 300),
+                             m.cfg.get("alto_placa", 100))                 # horizontal
     etapa1.guardar_deteccion(nombre, base, bbox, m.cfg)
     etapa1.guardar_enderezada(nombre, placa, m.cfg)
 
@@ -160,14 +174,23 @@ def procesar_frame_detallado(nombre, frame, m):
     else:
         entrada_seg = placa
 
-    # ETAPA 2: segmentar caracteres -> crops.
-    _, crops = etapa2.segmentar(entrada_seg, m.modelo_seg)
+    # ETAPA 2: segmentar caracteres -> crops (+ cajas para visualizar).
+    cajas, crops = etapa2.segmentar(entrada_seg, m.modelo_seg)
     etapa2.guardar(nombre, crops)
 
-    # ETAPA 3: OCR -> texto de la placa.
-    texto = etapa3.clasificar(crops, m.modelo_ocr, m.classes_ocr)
+    # visualizacion de la segmentacion: entrada_seg con las cajas de caracteres
+    seg_overlay = entrada_seg.copy()
+    if seg_overlay.ndim == 2:
+        seg_overlay = cv2.cvtColor(seg_overlay, cv2.COLOR_GRAY2BGR)
+    for (sx1, sy1, sx2, sy2) in cajas:
+        cv2.rectangle(seg_overlay, (sx1, sy1), (sx2, sy2), (0, 255, 0), 2)
+
+    # ETAPA 3: OCR -> texto + confianza por caracter.
+    texto, confs = etapa3.clasificar(crops, m.modelo_ocr, m.classes_ocr, return_conf=True)
     etapa3.guardar_resultado(nombre, texto)
-    print(f"  [OK] {nombre}: {len(crops)} crops -> '{texto}'")
+    conf_ocr = (sum(confs) / len(confs)) if confs else 0.0
+    ocr_por_caracter = list(zip(texto, confs))
+    print(f"  [OK] {nombre}: {len(crops)} crops -> '{texto}' (conf {conf_ocr:.2f})")
     return ResultadoFrame(
         texto=texto,
         placa=placa,
@@ -176,4 +199,10 @@ def procesar_frame_detallado(nombre, frame, m):
         placa_bbox=bbox,
         entrada_segmentacion=entrada_seg,
         uso_filtros=m.usar_filtros,
+        placa_crop=placa_crop,
+        seg_overlay=seg_overlay,
+        conf_vehiculo=conf_v,
+        conf_placa=conf_p,
+        conf_ocr=conf_ocr,
+        ocr_por_caracter=ocr_por_caracter,
     )

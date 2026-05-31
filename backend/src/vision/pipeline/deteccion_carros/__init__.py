@@ -47,9 +47,11 @@ def cargar_modelo(cfg):
     return cargar_yolo(_ruta_aqui(cfg["modelo"]))   # modelo de la etapa -> relativo a esta carpeta
 
 
-def detectar_carro(modelo, frame, cfg):
-    """Caja del carro mas confiable (x1,y1,x2,y2), o None."""
-    return detectar(modelo, frame, cfg.get("conf_min", 0.25), cfg.get("imgsz", 640))
+def detectar_carro(modelo, frame, cfg, return_conf=False):
+    """Caja del carro mas confiable (x1,y1,x2,y2), o None.
+    Con return_conf=True devuelve (bbox, confianza)."""
+    return detectar(modelo, frame, cfg.get("conf_min", 0.25), cfg.get("imgsz", 640),
+                    return_conf=return_conf)
 
 
 def recortar(frame, bbox, margen=0.08):

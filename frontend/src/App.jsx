@@ -222,15 +222,55 @@ function StatusPill({ icon: Icon, label, value, tone }) {
 /* ─── Dashboard ──────────────────────────────────────────── */
 
 function Dashboard({ event, onOpen }) {
-  const { videoUrl } = useRealtime();
+  const { videoUrl, events } = useRealtime();
   return (
     <div className="view-stack">
-      <div className="hero-grid">
+      {/* Estilo NVR: camara grande a la izquierda, feed de eventos a la derecha */}
+      <div className="cctv-grid">
         <VideoPanel videoUrl={videoUrl} event={event} />
-        <LatestDetection event={event} onOpen={onOpen} />
+        <EventFeed events={events} onOpen={onOpen} />
       </div>
       <MetricGrid />
-      <RecentTable onOpen={onOpen} />
+    </div>
+  );
+}
+
+function EventFeed({ events, onOpen }) {
+  return (
+    <div className="card cctv-feed">
+      <div className="card-header">
+        <div className="card-header-left">
+          <div className="live-dot" />
+          <span style={{ fontSize: ".875rem", fontWeight: 700 }}>Eventos en vivo</span>
+        </div>
+        <span className="stream-tag">{events.length}</span>
+      </div>
+      <div className="cctv-feed-list">
+        {events.length === 0 && (
+          <div className="cctv-feed-empty">Esperando detecciones de la cámara…</div>
+        )}
+        {events.map(e => {
+          const over = e.speed > e.speedLimit;
+          return (
+            <button key={e.id} className="cctv-feed-item" onClick={() => onOpen(e.id)}>
+              <div className="cctv-feed-thumb">
+                {e.images?.frame
+                  ? <img src={e.images.frame} alt={e.plateValidated ?? e.plateOcr} />
+                  : <Car size={20} />}
+              </div>
+              <div className="cctv-feed-body">
+                <div className="cctv-feed-plate">{e.plateValidated ?? e.plateOcr}</div>
+                <span className={`badge ${e.type}`}><span className="badge-dot" />{TYPE_LABEL[e.type]}</span>
+                <div className="cctv-feed-sub">
+                  <span className={over ? "text-danger" : "text-success"}>{e.speed} km/h</span>
+                  {" · "}{e.dateTime?.split(" ")[1]}
+                </div>
+              </div>
+              <ChevronRight size={15} color="var(--muted)" />
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -263,18 +303,14 @@ function VideoPanel({ videoUrl, event }) {
           <div className="live-dot" />
           <span style={{ fontSize: ".875rem", fontWeight: 700 }}>Video en vivo</span>
         </div>
-        <span className="stream-tag">MJPEG /api/cameras/main/stream</span>
       </div>
       <div className="video-frame" ref={containerRef}>
+        {/* El stream MJPEG ya viene anotado por vision (lineas + cajas + velocidad). */}
         <img
           src={videoUrl}
           alt="Video en vivo"
-          onError={e => { e.target.src = event?.images?.frame ?? ""; }}
+          onError={e => { if (event?.images?.frame) e.target.src = event.images.frame; }}
         />
-        <div className="vbox">
-          <span className="vbox-label">ID: 18 | Auto</span>
-        </div>
-        <div className="pbox">Placa</div>
         <button className="video-fullscreen-btn" onClick={toggleFullscreen} title={isFs ? "Salir de pantalla completa" : "Pantalla completa"}>
           {isFs ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
@@ -349,10 +385,10 @@ function MetricGrid() {
   return (
     <div className="metric-grid">
       {[
-        { icon: Car,          label: "Detectados hoy",   value: todayEvents.length || 128, tone: "blue",  sub: "vehículos" },
-        { icon: ShieldAlert,  label: "Infracciones hoy", value: violations.length  || 15,  tone: "red",   sub: "eventos" },
-        { icon: Gauge,        label: "Vel. promedio",    value: `${avgSpeed || 43} km/h`,  tone: "amber", sub: "hoy" },
-        { icon: ClipboardList,label: "Pendientes",       value: pending.length     || 7,   tone: "rose",  sub: "de revisión" },
+        { icon: Car,          label: "Detectados hoy",   value: todayEvents.length, tone: "blue",  sub: "vehículos" },
+        { icon: ShieldAlert,  label: "Infracciones hoy", value: violations.length,  tone: "red",   sub: "eventos" },
+        { icon: Gauge,        label: "Vel. promedio",    value: `${avgSpeed} km/h`, tone: "amber", sub: "hoy" },
+        { icon: ClipboardList,label: "Pendientes",       value: pending.length,     tone: "rose",  sub: "de revisión" },
       ].map(({ icon: Icon, label, value, tone, sub }) => (
         <div key={label} className="metric-card">
           <div className={`metric-icon ${tone}`}><Icon size={22} /></div>
@@ -415,6 +451,13 @@ function EventTable({ rows, onOpen }) {
           </tr>
         </thead>
         <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={8} style={{ textAlign: "center", color: "var(--muted)", padding: "28px 0" }}>
+                Sin eventos aún. Esperando detecciones de la cámara…
+              </td>
+            </tr>
+          )}
           {rows.map(e => (
             <tr key={e.id}>
               <td style={{ color: "var(--muted)", fontSize: ".8rem" }}>{e.dateTime?.split(" ")[1]}</td>
@@ -615,7 +658,6 @@ function HumanReviewBox({ event }) {
 /* ─── Tab: Resumen ───────────────────────────────────────── */
 
 function ResumenTab({ event }) {
-  const [modalOpen, setModalOpen] = useState(false);
   const over   = event.speed > event.speedLimit;
   const excess = event.speed - event.speedLimit;
 
@@ -632,10 +674,6 @@ function ResumenTab({ event }) {
               <div className="main-img-wrap">
                 <img src={event.images.frame} alt="Vehículo detectado" />
               </div>
-              <button className="plate-img-wrap" onClick={() => setModalOpen(true)}>
-                <img src={event.images.plate} alt="Crop de placa" />
-                <span className="plate-img-label"><Maximize2 size={13} /> Ampliar placa</span>
-              </button>
             </div>
           </div>
 
@@ -703,18 +741,6 @@ function ResumenTab({ event }) {
           )}
         </div>
       </div>
-
-      {modalOpen && (
-        <div className="modal-overlay" onClick={() => setModalOpen(false)}>
-          <div className="modal-card" onClick={e => e.stopPropagation()}>
-            <button className="btn-icon modal-close" onClick={() => setModalOpen(false)}><X size={16} /></button>
-            <div className="modal-card-body">
-              <img src={event.images.plate} alt="Placa ampliada" />
-              <strong>{event.plateValidated}</strong>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -724,42 +750,48 @@ function ResumenTab({ event }) {
 function VisionTab({ event }) {
   const [showTech, setShowTech] = useState(false);
   const cv = event.computerVision;
+  const perChar = cv.ocrPerChar ?? [];
+  const ocrConf = event.ocrConfidence ?? null;
+  const pct = c => Math.round((c ?? 0) * 100);
 
-  const steps = [
-    { label: "Vehículo detectado", pct: cv.vehicleDetection.confidence },
-    { label: "Placa detectada",    pct: cv.plateDetection.confidence },
-    { label: "Enderezado",         pct: 0.98 },
-    { label: "Filtros aplicados",  pct: 0.93 },
-    { label: "Segmentación",       pct: 0.91 },
-    { label: "OCR exitoso",        pct: event.ocrConfidence },
+  // Etapas. Las CNN tienen confianza real (barra). Enderezado/Filtros/Segmentación
+  // son CV determinista -> sin barra, solo "✓ Aplicado" (no se inventan %).
+  const stages = [
+    { label: "Vehículo detectado", src: event.images.frame,         conf: cv.vehicleDetection.confidence },
+    { label: "Placa detectada",    src: event.images.plateDetected, conf: cv.plateDetection.confidence },
+    { label: "Enderezado",         src: event.images.plateStraight, conf: null },
+    ...(cv.usoFiltros
+      ? [{ label: "Filtros aplicados", src: event.images.plateFiltered, conf: null }]
+      : []),
+    { label: "Segmentación",       src: event.images.segmentation,  conf: null },
+    { label: "OCR",                src: null,                       conf: ocrConf },
   ];
 
-  const procImages = [
-    { num: 1, label: "Vehículo detectado", src: event.images.frame },
-    { num: 2, label: "Placa detectada",    src: event.images.plate },
-    { num: 3, label: "Enderezado",         src: event.images.plate },
-    { num: 4, label: "Filtros aplicados",  src: event.images.plate },
-    { num: 5, label: "Segmentación",       src: event.images.plate },
-    { num: 6, label: "OCR exitoso",        src: event.images.plate },
-  ];
-
-  const chars = (event.plateValidated ?? "").replace("-", "").split("");
+  const procImages = stages.filter(s => s.src);   // solo etapas con imagen real
 
   return (
     <div className="tab-panel">
       <div className="card">
         <div className="card-header">
           <div className="card-header-left"><Cpu size={16} /><h2>Etapas de procesamiento</h2></div>
-          <span style={{ fontSize: ".75rem", color: "var(--muted)" }}>Proceso completado · 0.84 s</span>
+          <span style={{ fontSize: ".75rem", color: "var(--muted)" }}>Confianza real del modelo</span>
         </div>
         <div className="pipeline-steps">
-          {steps.map((s, i) => (
+          {stages.map((s, i) => (
             <div key={s.label} className="pipeline-step">
-              {i < steps.length - 1 && <ChevronRight className="step-arrow" size={16} />}
+              {i < stages.length - 1 && <ChevronRight className="step-arrow" size={16} />}
               <div className="step-num-icon done">{i + 1}</div>
               <div className="step-name">{s.label}</div>
-              <div className="step-conf">{Math.round(s.pct * 100)}%</div>
-              <div className="step-bar"><div className="step-bar-fill" style={{ width: `${Math.round(s.pct * 100)}%` }} /></div>
+              {s.conf != null ? (
+                <>
+                  <div className="step-conf">{pct(s.conf)}%</div>
+                  <div className="step-bar"><div className="step-bar-fill" style={{ width: `${pct(s.conf)}%` }} /></div>
+                </>
+              ) : (
+                <div className="step-conf" style={{ color: "var(--green)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <Check size={13} /> Aplicado
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -767,50 +799,16 @@ function VisionTab({ event }) {
 
       <div className="card">
         <div className="card-header"><div className="card-header-left"><Eye size={16} /><h2>Visualización del proceso</h2></div></div>
-        <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 260px", gap: 16 }}>
-          <div className="process-images-grid">
-            {procImages.map(({ num, label, src }) => (
-              <div key={num} className="proc-img-card">
-                <img src={src} alt={label} />
+        <div className="card-body">
+          <div className="process-images-grid proc-grid-lg">
+            {procImages.map((s, i) => (
+              <div key={s.label} className="proc-img-card">
+                <img src={s.src} alt={s.label} />
                 <div className="proc-img-label">
-                  <div className="proc-num">{num}</div>{label}
+                  <div className="proc-num">{i + 1}</div>{s.label}
                 </div>
               </div>
             ))}
-          </div>
-
-          <div style={{ background: "var(--bg)", borderRadius: 10, border: "1px solid var(--border)", padding: 16, display: "grid", gap: 14 }}>
-            <div style={{ fontSize: ".72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "var(--muted)" }}>Resultado OCR</div>
-            <div className="ocr-plate-display">
-              <div className="ocr-plate-text">{event.plateValidated}</div>
-              <div className="ocr-check-badge"><Check size={12} /></div>
-            </div>
-            <div>
-              <div className="ocr-conf-row">
-                <span className="ocr-conf-label">Confianza OCR</span>
-                <span className="ocr-conf-value">{Math.round(event.ocrConfidence * 100)}%</span>
-              </div>
-              <div className="conf-bar" style={{ marginTop: 6 }}>
-                <div className="conf-bar-fill" style={{ width: `${Math.round(event.ocrConfidence * 100)}%` }} />
-              </div>
-            </div>
-            <div className="ocr-stats">
-              <div className="ocr-stat"><span className="ocr-stat-val">{chars.length}</span><span className="ocr-stat-lab">Caract.</span></div>
-              <div className="ocr-stat"><span className="ocr-stat-val">{event.ocrConfidence.toFixed(2)}</span><span className="ocr-stat-lab">Conf.</span></div>
-              <div className="ocr-stat"><span className="ocr-stat-val">0.84s</span><span className="ocr-stat-lab">Tiempo</span></div>
-              <div className="ocr-stat"><span className="ocr-stat-val">CNN</span><span className="ocr-stat-lab">Modelo</span></div>
-            </div>
-            <div>
-              <div style={{ fontSize: ".72rem", fontWeight: 700, color: "var(--muted)", marginBottom: 6, textTransform: "uppercase" }}>Por carácter</div>
-              <div className="char-grid">
-                {chars.map((ch, i) => (
-                  <div key={i} className="char-badge">
-                    <span className="char-badge-ch">{ch}</span>
-                    <span className="char-badge-pct">{Math.round((event.ocrConfidence - i * 0.005) * 100)}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
 
@@ -822,16 +820,61 @@ function VisionTab({ event }) {
           {showTech && (
             <dl className="tech-details">
               {[
-                { label: "Tamaño original",    val: "1920 × 1080 px" },
-                { label: "ROI placa",          val: cv.plateDetection.bbox },
-                { label: "Ángulo corrección",  val: "-2.35°" },
-                { label: "Segmentación",       val: cv.segmentation },
-                { label: "Filtros",            val: cv.filters },
-                { label: "Modelo OCR",         val: "CRNN + Attention" },
+                { label: "ROI vehículo",           val: cv.vehicleDetection.bbox },
+                { label: "ROI placa",              val: cv.plateDetection.bbox },
+                { label: "Conf. vehículo",         val: cv.vehicleDetection.confidence != null ? `${pct(cv.vehicleDetection.confidence)}%` : "—" },
+                { label: "Conf. placa",            val: cv.plateDetection.confidence != null ? `${pct(cv.plateDetection.confidence)}%` : "—" },
+                { label: "Caracteres segmentados", val: cv.caracteresSegmentados },
+                { label: "Filtros",                val: cv.usoFiltros ? "aplicados" : "omitidos" },
+                { label: "Modelo OCR",             val: "CNN (clasificador por carácter)" },
               ].map(({ label, val }) => (
                 <div key={label} className="tech-item"><dt>{label}</dt><dd>{val}</dd></div>
               ))}
             </dl>
+          )}
+        </div>
+      </div>
+
+      {/* Resultado OCR — seccion propia a todo el ancho */}
+      <div className="card">
+        <div className="card-header">
+          <div className="card-header-left"><FileText size={16} color="var(--uta-red)" /><h2>Resultado OCR</h2></div>
+        </div>
+        <div className="card-body ocr-result-section">
+          <div className="ocr-result-main">
+            <div className="ocr-plate-display">
+              <div className="ocr-plate-text">{event.plateValidated ?? cv.ocr}</div>
+              <div className="ocr-check-badge"><Check size={12} /></div>
+            </div>
+            {ocrConf != null && (
+              <div className="ocr-conf-block">
+                <div className="ocr-conf-row">
+                  <span className="ocr-conf-label">Confianza OCR</span>
+                  <span className="ocr-conf-value">{pct(ocrConf)}%</span>
+                </div>
+                <div className="conf-bar" style={{ marginTop: 6 }}>
+                  <div className="conf-bar-fill" style={{ width: `${pct(ocrConf)}%` }} />
+                </div>
+              </div>
+            )}
+            <div className="ocr-stats">
+              <div className="ocr-stat"><span className="ocr-stat-val">{perChar.length || cv.caracteresSegmentados}</span><span className="ocr-stat-lab">Caract.</span></div>
+              <div className="ocr-stat"><span className="ocr-stat-val">{ocrConf != null ? ocrConf.toFixed(2) : "—"}</span><span className="ocr-stat-lab">Conf.</span></div>
+              <div className="ocr-stat"><span className="ocr-stat-val">CNN</span><span className="ocr-stat-lab">Modelo</span></div>
+            </div>
+          </div>
+          {perChar.length > 0 && (
+            <div className="ocr-result-chars">
+              <div style={{ fontSize: ".72rem", fontWeight: 700, color: "var(--muted)", marginBottom: 8, textTransform: "uppercase" }}>Confianza por carácter</div>
+              <div className="char-grid">
+                {perChar.map((c, i) => (
+                  <div key={i} className="char-badge">
+                    <span className="char-badge-ch">{c.ch}</span>
+                    <span className="char-badge-pct">{pct(c.conf)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </div>
