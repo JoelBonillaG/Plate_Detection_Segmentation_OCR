@@ -69,3 +69,22 @@ def build_vehicle_notification_body(notification: dict) -> str:
         f"Limite permitido: {notification.get('limite_velocidad')} km/h.\n\n"
         "Este mensaje fue generado por el sistema de monitoreo vehicular universitario.\n"
     )
+
+
+def build_congratulation_body(data: dict) -> str:
+    """Cuerpo del correo para conductores que circularon dentro del límite."""
+    nombre    = data.get("propietario_nombre") or "propietario"
+    placa     = data.get("placa", "—")
+    velocidad = data.get("velocidad", 0)
+    limite    = data.get("limite_velocidad", 20)
+    return (
+        f"Estimado/a {nombre},\n\n"
+        f"El sistema de monitoreo vehicular de la Universidad Técnica de Ambato\n"
+        f"registró que el vehículo con placa {placa} circuló dentro del límite de\n"
+        f"velocidad permitido en el campus universitario.\n\n"
+        f"  • Velocidad registrada : {float(velocidad):.1f} km/h\n"
+        f"  • Límite permitido     : {float(limite):.0f} km/h\n\n"
+        f"¡Gracias por su conducción responsable y por contribuir a la seguridad\n"
+        f"de nuestra comunidad universitaria!\n\n"
+        f"Universidad Técnica de Ambato — Sistema de Monitoreo Vehicular\n"
+    )

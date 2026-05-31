@@ -150,6 +150,18 @@ def lookup_vehiculo_id(placa: str) -> str | None:
             return str(row["id"]) if row else None
 
 
+def lookup_vehiculo_info(vehiculo_id: str) -> dict | None:
+    """Devuelve nombre y correo del propietario dado el UUID del vehículo."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT propietario_nombre, propietario_correo FROM vehiculos WHERE id = %s",
+                (vehiculo_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
 def count_reincidencias(placa: str) -> int:
     """Cuenta infracciones/graves previas del vehículo."""
     with get_connection() as conn:
@@ -364,5 +376,6 @@ def _row_to_payload(row: dict) -> dict[str, Any]:
             "dias_sancion_sugeridos": row.get("fuzzy_dias"),
             "reglas_activadas": row.get("reglas_activadas") or [],
             "salida_crisp": float(row["salida_crisp"]) if row.get("salida_crisp") is not None else None,
+            "es_temeraria": float(row.get("velocidad") or 0) >= 50.0,
         },
     }

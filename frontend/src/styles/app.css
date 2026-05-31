@@ -1605,6 +1605,208 @@ tr:hover td { background: #fafafa; }
 .audit-val.prev { background: #fee2e2; color: #991b1b; }
 .audit-val.next { background: #dcfce7; color: #15803d; }
 
+/* ─── Fuzzy: estado normal / temeraria ───────────────── */
+
+.fuzzy-state-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 28px 24px;
+  margin: 0 18px 18px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+}
+
+.fuzzy-state-card h3 {
+  font-size: 1.05rem;
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+
+.fuzzy-state-card p {
+  font-size: .84rem;
+  color: var(--muted);
+  line-height: 1.55;
+  margin-bottom: 14px;
+}
+
+.fuzzy-state-normal {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.fuzzy-state-normal h3 { color: #15803d; }
+
+.fuzzy-state-temeraria {
+  background: #fff5f5;
+  border-color: #fecaca;
+}
+
+.fuzzy-state-temeraria h3 { color: var(--uta-red); }
+
+.fuzzy-state-kpis {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.fuzzy-state-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: rgba(0,0,0,.04);
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+
+.fuzzy-state-kpi.danger { background: rgba(193,32,40,.08); }
+
+.fsk-value {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.fuzzy-state-kpi.danger .fsk-value { color: var(--uta-red); }
+
+.fsk-label { font-size: .72rem; color: var(--muted); }
+
+.temeraria-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--uta-red);
+  color: #fff;
+  font-size: .73rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+  padding: 6px 14px;
+  border-radius: 999px;
+  margin: 4px 0 10px;
+}
+
+.fuzzy-legal-note {
+  font-size: .72rem;
+  color: var(--muted) !important;
+  margin-bottom: 0 !important;
+  font-style: italic;
+}
+
+/* ─── Membership chart SVG ────────────────────────────── */
+
+.mem-chart-svg {
+  width: 100%;
+  height: 74px;
+  display: block;
+  margin-bottom: 2px;
+}
+
+/* ─── Membership legend ───────────────────────────────── */
+
+.mem-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+.mem-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: .68rem;
+  color: var(--muted);
+  opacity: .55;
+  transition: opacity .15s;
+}
+
+.mem-legend-item.active { opacity: 1; color: var(--text); }
+
+.mem-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.mem-legend-name { font-weight: 600; }
+
+.mem-legend-val {
+  font-size: .66rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0,0,0,.06);
+}
+
+/* ─── Fuzzy output chart ──────────────────────────────── */
+
+.fuzzy-output-chart-wrap {
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+
+/* ─── Crisp output bar ────────────────────────────────── */
+
+.fuzzy-crisp-wrap {
+  margin-bottom: 12px;
+  padding: 0 2px;
+}
+
+.fuzzy-crisp-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: .72rem;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.fuzzy-crisp-label strong {
+  font-size: .95rem;
+  font-weight: 800;
+  color: var(--uta-red);
+}
+
+.fuzzy-crisp-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #16a34a, #d97706, #c12028);
+  overflow: visible;
+}
+
+.fuzzy-crisp-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: transparent;
+  border-right: none;
+}
+
+.fuzzy-crisp-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border: 2.5px solid var(--uta-red);
+  border-radius: 50%;
+  z-index: 2;
+}
+
+.fuzzy-crisp-range {
+  display: flex;
+  justify-content: space-between;
+  font-size: .65rem;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
 /* ─── Notifications ───────────────────────────────────── */
 
 .notif-grid {

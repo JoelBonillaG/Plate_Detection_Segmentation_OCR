@@ -839,153 +839,469 @@ function VisionTab({ event }) {
   );
 }
 
-/* ─── Triangle SVG ───────────────────────────────────────── */
+/* ─── FIS definitions hook ───────────────────────────────── */
 
-function TriangleSVG({ domain, points, color = "#c12028", currentVal = null }) {
+// Colors + labels are UI concerns — stay in frontend
+const SET_COLOR = {
+  no_excess: "#16a34a", minor: "#84cc16", moderate: "#d97706", serious: "#ea580c", critical: "#c12028",
+  clean: "#16a34a", low: "#84cc16", high: "#ea580c", chronic: "#c12028",
+  no_action: "#16a34a", warning: "#84cc16", low_susp: "#ca8a04",
+  medium_susp: "#d97706", high_susp: "#ea580c", critical_susp: "#c12028",
+};
+
+// Fallback — used if backend unreachable; matches exactly what /api/difuso/definiciones returns
+const _FALLBACK_DEFS = {
+  limite_velocidad: 20, umbral_temeraria: 50,
+  variables_entrada: {
+    exceso_velocidad: {
+      universo: [0, 40], unidad: "km/h",
+      conjuntos: [
+        { clave: "no_excess", etiqueta: "Sin exceso", tipo: "trap", parametros: [0, 0, 0, 1] },
+        { clave: "minor",     etiqueta: "Leve",       tipo: "tri",  parametros: [0, 4, 8] },
+        { clave: "moderate",  etiqueta: "Moderado",   tipo: "tri",  parametros: [5, 12, 20] },
+        { clave: "serious",   etiqueta: "Grave",      tipo: "tri",  parametros: [16, 24, 32] },
+        { clave: "critical",  etiqueta: "Crítico",    tipo: "trap", parametros: [28, 35, 40, 40] },
+      ],
+    },
+    reincidencia: {
+      universo: [0, 10], unidad: "infracciones",
+      conjuntos: [
+        { clave: "clean",    etiqueta: "Limpio",   tipo: "trap", parametros: [0, 0, 0, 1] },
+        { clave: "low",      etiqueta: "Bajo",     tipo: "tri",  parametros: [0, 1.5, 3] },
+        { clave: "moderate", etiqueta: "Moderado", tipo: "tri",  parametros: [2, 4, 6] },
+        { clave: "high",     etiqueta: "Alto",     tipo: "tri",  parametros: [5, 6.5, 8] },
+        { clave: "chronic",  etiqueta: "Crónico",  tipo: "trap", parametros: [7, 8.5, 10, 10] },
+      ],
+    },
+  },
+  salida: {
+    universo: [0, 100],
+    conjuntos: [
+      { clave: "no_action",     etiqueta: "Sin acción",    tipo: "trap", parametros: [0, 0, 5, 15] },
+      { clave: "warning",       etiqueta: "Advertencia",   tipo: "tri",  parametros: [10, 20, 30] },
+      { clave: "low_susp",      etiqueta: "Susp. baja",    tipo: "tri",  parametros: [25, 40, 55] },
+      { clave: "medium_susp",   etiqueta: "Susp. media",   tipo: "tri",  parametros: [50, 65, 80] },
+      { clave: "high_susp",     etiqueta: "Susp. alta",    tipo: "tri",  parametros: [75, 85, 95] },
+      { clave: "critical_susp", etiqueta: "Susp. crítica", tipo: "trap", parametros: [90, 96, 100, 100] },
+    ],
+  },
+};
+
+let _defCache = _FALLBACK_DEFS;  // start with fallback; backend response overrides it
+
+function useFuzzyDefs() {
+  const [defs, setDefs] = React.useState(_defCache);
+
+  React.useEffect(() => {
+    if (_defCache !== _FALLBACK_DEFS) return;  // already fetched real data
+    fetch(`${API}/api/difuso/definiciones`)
+      .then(r => r.json())
+      .then(d => { _defCache = d; setDefs(d); })
+      .catch(() => {});  // fallback stays active on error
+  }, []);
+
+  return defs;
+}
+
+// Convert backend conjunto to chart-ready set object
+function toChartSet(c) {
+  return {
+    key:    c.clave,
+    label:  c.etiqueta,
+    type:   c.tipo,
+    params: c.parametros,
+    color:  SET_COLOR[c.clave] ?? "#64748b",
+  };
+}
+
+/* ─── Membership evaluation (mirrors Python fuzzy._trimf/_trapmf) */
+
+function _trimf(x, a, b, c) {
+  if (x <= a || x >= c) return 0;
+  if (x <= b) return b !== a ? (x - a) / (b - a) : 1;
+  return c !== b ? (c - x) / (c - b) : 1;
+}
+function _trapmf(x, a, b, c, d) {
+  if (x < a || x > d) return 0;
+  if (b <= x && x <= c) return 1;
+  if (x < b) return b !== a ? (x - a) / (b - a) : 1;
+  return d !== c ? (d - x) / (d - c) : 1;
+}
+function evalMf(x, set) {
+  const p = set.params;
+  return set.type === "tri"
+    ? _trimf(x, p[0], p[1], p[2])
+    : _trapmf(x, p[0], p[1], p[2], p[3]);
+}
+
+/* ─── Membership function chart (multi-set SVG, interactive) */
+
+function MembershipChart({ domain, sets, currentVal }) {
   const [dMin, dMax] = domain;
   const range = dMax - dMin || 1;
-  const W = 200, H = 60, PAD = 8;
+  const W = 240, H = 68, PAD = 12;
   const drawW = W - PAD * 2;
-  const toX = v => PAD + ((v - dMin) / range) * drawW;
-  const [a, b, c] = points;
-  const pathD = `M${toX(a)},${H - 4} L${toX(b)},4 L${toX(c)},${H - 4} Z`;
+  const toX = v => PAD + ((Math.max(dMin, Math.min(dMax, v)) - dMin) / range) * drawW;
+  const [hov, setHov] = React.useState(null);
+
+  const pathFor = s => {
+    if (s.type === "tri") {
+      const [a, b, c] = s.params;
+      return `M${toX(a)},${H - 5} L${toX(b)},5 L${toX(c)},${H - 5} Z`;
+    }
+    const [a, b, c, d] = s.params;
+    return `M${toX(a)},${H - 5} L${toX(b)},5 L${toX(c)},5 L${toX(d)},${H - 5} Z`;
+  };
+
+  const onMouseMove = e => {
+    if (!sets.length) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const xRatio = (e.clientX - rect.left) / rect.width;
+    const xVal = dMin + ((xRatio * W - PAD) / drawW) * range;
+    const clamped = Math.max(dMin, Math.min(dMax, xVal));
+    const memberships = sets
+      .map(s => ({ ...s, value: evalMf(clamped, s) }))
+      .filter(s => s.value > 0.001)
+      .sort((a, b) => b.value - a.value);
+    setHov({ xVal: clamped, memberships, rightSide: xRatio > 0.55 });
+  };
+
+  const xCur = currentVal !== null && currentVal !== undefined ? toX(currentVal) : null;
+  const xHov = hov !== null ? toX(hov.xVal) : null;
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="triangle-chart" style={{ overflow: "visible" }}>
-      <line x1={PAD} y1={H - 4} x2={W - PAD} y2={H - 4} stroke="#e2e8f0" strokeWidth={1} />
-      <path d={pathD} fill={color} fillOpacity={0.18} stroke={color} strokeWidth={2} strokeLinejoin="round" />
-      {currentVal !== null && currentVal >= dMin && currentVal <= dMax && (
-        <line x1={toX(currentVal)} y1={2} x2={toX(currentVal)} y2={H - 2}
-          stroke="#f59e0b" strokeWidth={2} strokeDasharray="3,2" />
+    <div className="mem-chart-wrap" onMouseMove={onMouseMove} onMouseLeave={() => setHov(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="mem-chart-svg" style={{ overflow: "visible" }}>
+        <line x1={PAD} y1={H - 5} x2={W - PAD} y2={H - 5} stroke="var(--border)" strokeWidth={1} />
+        <text x={PAD}     y={H + 5} fontSize="7" fill="var(--muted)" textAnchor="middle">{dMin}</text>
+        <text x={W - PAD} y={H + 5} fontSize="7" fill="var(--muted)" textAnchor="middle">{dMax}</text>
+        {sets.map(s => (
+          <path key={s.key} d={pathFor(s)}
+            fill={s.color} fillOpacity={0.15}
+            stroke={s.color} strokeWidth={1.5} strokeLinejoin="round" />
+        ))}
+        {xHov !== null && (
+          <line x1={xHov} y1={3} x2={xHov} y2={H - 5}
+            stroke="#94a3b8" strokeWidth={1} strokeDasharray="2,2" />
+        )}
+        {xCur !== null && (
+          <>
+            <line x1={xCur} y1={3} x2={xCur} y2={H - 5}
+              stroke="#f59e0b" strokeWidth={2} strokeDasharray="3,2.5" />
+            <circle cx={xCur} cy={H - 5} r={3.5} fill="#f59e0b" />
+          </>
+        )}
+      </svg>
+
+      {hov && hov.memberships.length > 0 && (
+        <div className="mem-tooltip" style={hov.rightSide ? { right: 4 } : { left: 4 }}>
+          <div className="mem-tooltip-x">{hov.xVal.toFixed(2)}</div>
+          {hov.memberships.map(m => (
+            <div key={m.key} className="mem-tooltip-row">
+              <span className="mem-tooltip-dot" style={{ background: m.color }} />
+              <span className="mem-tooltip-label">{m.label}</span>
+              <span className="mem-tooltip-pct">{(m.value * 100).toFixed(0)}%</span>
+            </div>
+          ))}
+        </div>
       )}
-    </svg>
+    </div>
+  );
+}
+
+function MembershipLegend({ sets, memberships }) {
+  return (
+    <div className="mem-legend">
+      {sets.map(s => {
+        const v = memberships?.[s.key] ?? 0;
+        const active = v > 0.01;
+        return (
+          <div key={s.key} className={`mem-legend-item${active ? " active" : ""}`}>
+            <span className="mem-legend-dot" style={{ background: s.color }} />
+            <span className="mem-legend-name">{s.label}</span>
+            {active && <span className="mem-legend-val">{v.toFixed(2)}</span>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
 /* ─── Tab: Sistema difuso ────────────────────────────────── */
 
 function FuzzyTab({ event }) {
-  const fz = event.fuzzySystem;
-  const isHigh = ["alto", "critico"].includes(event.riskLevel);
-  const defuzzVal = isHigh ? 72 : 22;
+  const fz   = event.fuzzySystem;
+  const defs = useFuzzyDefs();
+  const speed = event.speed;
+  const isNormal    = event.type === "normal" || speed <= 20;
+  const isTemeraria = fz.esTemeraria || speed >= 50;
+  const isFIS       = !isNormal && !isTemeraria;
 
-  const rules = [
-    { id: "R1", desc: "Si exceso es alto Y OCR es alta → riesgo es alto",     activation: 0.82, level: "high" },
-    { id: "R2", desc: "Si exceso es moderado Y reincidencia es media → riesgo es alto", activation: 0.65, level: "high" },
-    { id: "R3", desc: "Si exceso es alto Y OCR es media → riesgo es alto",    activation: 0.48, level: "high" },
-    { id: "R4", desc: "Si exceso es bajo Y OCR es alta → riesgo es bajo",     activation: 0.12, level: "low" },
-    { id: "R5", desc: "Si exceso moderado Y reincidencia baja → riesgo medio", activation: 0.08, level: "medium" },
-  ];
+  // Chart sets from backend definitions (or empty while loading)
+  const excesoSets   = defs ? defs.variables_entrada.exceso_velocidad.conjuntos.map(toChartSet) : [];
+  const reinciSets   = defs ? defs.variables_entrada.reincidencia.conjuntos.map(toChartSet) : [];
+  const severidadSets = defs ? defs.salida.conjuntos.map(toChartSet) : [];
+  const limitVel     = defs?.limite_velocidad ?? 20;
+
+  // Best activated set names
+  const topExceso = Object.entries(fz.pertenenciaExceso ?? {}).sort(([,a],[,b]) => b - a)[0]?.[0];
+  const topReinci = Object.entries(fz.pertenenciaReincidencia ?? {}).sort(([,a],[,b]) => b - a)[0]?.[0];
+
+  // Crisp value as % for bar position
+  const crispPct = fz.crispOutput !== null && fz.crispOutput !== undefined
+    ? Math.max(0, Math.min(100, fz.crispOutput))
+    : null;
+
+  const riskColors = { bajo: "#16a34a", medio: "#d97706", alto: "#ea580c", critico: "#c12028" };
+  const riskColor = riskColors[event.riskLevel] ?? "#64748b";
+
+  // Label helper (from loaded defs or fallback)
+  const setLabel = key => {
+    const allSets = [...(defs?.variables_entrada.exceso_velocidad.conjuntos ?? []),
+                    ...(defs?.variables_entrada.reincidencia.conjuntos ?? []),
+                    ...(defs?.salida.conjuntos ?? [])];
+    return allSets.find(s => s.clave === key)?.etiqueta ?? key;
+  };
 
   return (
     <div className="tab-panel">
       <div className="card">
         <div className="card-header">
-          <div className="card-header-left"><Zap size={16} color="var(--uta-red)" /><h2>Evaluación del sistema difuso</h2></div>
-          <span style={{ fontSize: ".75rem", color: "var(--muted)" }}>Inferencia Mamdani · mín-max</span>
+          <div className="card-header-left">
+            <Zap size={16} color="var(--uta-red)" />
+            <h2>Sistema de Inferencia Difusa — Mamdani</h2>
+          </div>
+          <span style={{ fontSize: ".75rem", color: "var(--muted)" }}>Implicación mín · Agregación max · Defuzz. centroide</span>
         </div>
-        <div className="fuzzy-three-col">
-          {/* Col 1: Entradas */}
-          <div>
-            <div className="fuzzy-col-label"><span className="fuzzy-col-num">1</span> Entradas</div>
-            {[
-              { name: "Exceso de velocidad", icon: Gauge,    cls: "speed", color: "#c12028",
-                domain: [0,30], pts: [4,10,18], val: fz.speedExcess, disp: `${fz.speedExcess} km/h`,
-                range: "0–30 km/h", mem: fz.speedMembership },
-              { name: "Confianza OCR",       icon: FileText, cls: "ocr",   color: "#2563eb",
-                domain: [0,1],  pts: [0.6,0.85,1.0], val: event.ocrConfidence, disp: event.ocrConfidence.toFixed(2),
-                range: "0–1",   mem: fz.ocrMembership },
-              { name: "Reincidencia",        icon: UserRound,cls: "recur", color: "#d97706",
-                domain: [0,1],  pts: [0.3,0.55,0.8], val: 0.58, disp: `${event.recurrenceCount} casos`,
-                range: "0–1",   mem: fz.recurrenceMembership },
-            ].map(({ name, icon: Icon, cls, color, domain, pts, val, disp, range, mem }) => (
-              <div key={name} className="fuzzy-input-var">
+
+        {/* ── Estado 1: Conductor sin infracción ─────────────── */}
+        {isNormal && (
+          <div className="fuzzy-state-card fuzzy-state-normal">
+            <CheckCircle2 size={40} color="#16a34a" />
+            <div>
+              <h3>Conductor sin infracción de velocidad</h3>
+              <p>Velocidad detectada dentro del límite permitido. El sistema difuso no se aplica — no procede sanción.</p>
+              <div className="fuzzy-state-kpis">
+                <div className="fuzzy-state-kpi">
+                  <span className="fsk-value">{speed} km/h</span>
+                  <span className="fsk-label">Detectado</span>
+                </div>
+                <div className="fuzzy-state-kpi">
+                  <span className="fsk-value">{limitVel} km/h</span>
+                  <span className="fsk-label">Límite campus</span>
+                </div>
+                <div className="fuzzy-state-kpi">
+                  <span className="fsk-value" style={{ color: "#16a34a" }}>0 días</span>
+                  <span className="fsk-label">Sanción</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Estado 2: Conducta temeraria ───────────────────── */}
+        {isTemeraria && (
+          <div className="fuzzy-state-card fuzzy-state-temeraria">
+            <ShieldAlert size={40} color="#c12028" />
+            <div>
+              <h3>Conducta temeraria detectada</h3>
+              <p>
+                Velocidad ≥ 50 km/h — excede el ámbito del sistema difuso. Se aplica la compuerta
+                determinista (crisp) de conducta temeraria. Sanción inmediata e irrevocable.
+              </p>
+              <div className="fuzzy-state-kpis">
+                <div className="fuzzy-state-kpi danger">
+                  <span className="fsk-value">{speed} km/h</span>
+                  <span className="fsk-label">Detectado</span>
+                </div>
+                <div className="fuzzy-state-kpi danger">
+                  <span className="fsk-value">≥ 50 km/h</span>
+                  <span className="fsk-label">Umbral temerario</span>
+                </div>
+              </div>
+              <div className="temeraria-badge">
+                <ShieldAlert size={14} /> REVOCACIÓN DEFINITIVA DEL ACCESO VEHICULAR
+              </div>
+              <p className="fuzzy-legal-note">
+                Art. 191 RLOTTTSV — límite máximo urbano para vehículos livianos.
+                La conducta excede el rango difuso y requiere decisión categórica.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Estado 3: Proceso FIS completo ─────────────────── */}
+        {isFIS && (
+          <div className="fuzzy-three-col">
+
+            {/* Col 1: Variables de entrada */}
+            <div>
+              <div className="fuzzy-col-label"><span className="fuzzy-col-num">1</span> Variables de entrada</div>
+
+              {/* Exceso de velocidad */}
+              <div className="fuzzy-input-var">
                 <div className="fuzzy-var-header">
-                  <div className={`fuzzy-var-icon ${cls}`}><Icon size={16} /></div>
+                  <div className="fuzzy-var-icon speed"><Gauge size={16} /></div>
                   <div>
-                    <div className="fuzzy-var-name">{name}</div>
-                    <div style={{ fontSize: ".7rem", color: "var(--muted)" }}>Rango {range}</div>
+                    <div className="fuzzy-var-name">Exceso de velocidad</div>
+                    <div style={{ fontSize: ".7rem", color: "var(--muted)" }}>Universo [0, 40] km/h</div>
                   </div>
                 </div>
-                <TriangleSVG domain={domain} points={pts} color={color} currentVal={val} />
+                <MembershipChart domain={[0, 40]} sets={excesoSets} currentVal={fz.speedExcess} />
+                <MembershipLegend sets={excesoSets} memberships={fz.pertenenciaExceso} />
                 <div className="fuzzy-var-body">
                   <div>
-                    <div className="fuzzy-var-value">{disp}</div>
-                    <div className="fuzzy-var-range">Pertenencia</div>
+                    <div className="fuzzy-var-value">{fz.speedExcess} km/h</div>
+                    <div className="fuzzy-var-range">Exceso sobre límite (20 km/h)</div>
                   </div>
-                  <span className={`membership-badge ${mem?.split(" ")[0] ?? ""}`}>{mem?.split(" ")[0]}</span>
+                  {topExceso && (
+                    <span className="membership-badge" style={{ background: "#fee2e2", color: "#c12028" }}>
+                      {setLabel(topExceso)}
+                    </span>
+                  )}
                 </div>
               </div>
-            ))}
-          </div>
 
-          {/* Col 2: Reglas */}
-          <div>
-            <div className="fuzzy-col-label"><span className="fuzzy-col-num">2</span> Reglas activadas</div>
-            <table className="rules-table">
-              <thead><tr><th>Regla</th><th>Descripción</th><th style={{ minWidth: 90 }}>Activación</th></tr></thead>
-              <tbody>
-                {rules.map(r => (
-                  <tr key={r.id}>
-                    <td><div className="rule-id">{r.id}</div></td>
-                    <td><div className="rule-desc">{r.desc}</div></td>
-                    <td>
-                      <div style={{ fontWeight: 700, fontSize: ".82rem", marginBottom: 4 }}>{r.activation.toFixed(2)}</div>
-                      <div className="rule-activation-bar">
-                        <div className={`rule-activation-fill activation-fill-${r.level === "high" ? "high" : r.level === "medium" ? "medium" : "low"}`}
-                          style={{ width: `${Math.round(r.activation * 100)}%` }} />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="rules-meta">
-              <div className="rules-meta-item"><GitBranch size={12} /> Método: <strong>Mamdani (mín-max)</strong></div>
-              <div className="rules-meta-item"><Zap size={12} /> Defuzz.: <strong>Centroide (centroid)</strong></div>
+              {/* Reincidencia */}
+              <div className="fuzzy-input-var" style={{ marginTop: 12 }}>
+                <div className="fuzzy-var-header">
+                  <div className="fuzzy-var-icon recur"><UserRound size={16} /></div>
+                  <div>
+                    <div className="fuzzy-var-name">Reincidencia</div>
+                    <div style={{ fontSize: ".7rem", color: "var(--muted)" }}>Universo [0, 10] infracciones</div>
+                  </div>
+                </div>
+                <MembershipChart domain={[0, 10]} sets={reinciSets} currentVal={event.recurrenceCount} />
+                <MembershipLegend sets={reinciSets} memberships={fz.pertenenciaReincidencia} />
+                <div className="fuzzy-var-body">
+                  <div>
+                    <div className="fuzzy-var-value">{event.recurrenceCount} casos</div>
+                    <div className="fuzzy-var-range">Infracciones previas registradas</div>
+                  </div>
+                  {topReinci && (
+                    <span className="membership-badge" style={{ background: "#fef3c7", color: "#92400e" }}>
+                      {setLabel(topReinci)}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Col 3: Resultado */}
-          <div>
-            <div className="fuzzy-col-label"><span className="fuzzy-col-num">3</span> Resultado final</div>
-            <div className={`fuzzy-result-risk${isHigh ? "" : " normal"}`}>
-              <div className={`risk-shield${isHigh ? "" : " normal"}`}><ShieldAlert size={26} /></div>
-              <div className={`risk-level-label${isHigh ? "" : " normal"}`}>{event.riskLevel?.toUpperCase()}</div>
-              <div className="risk-membership">Grado de pertenencia: 0.78</div>
-            </div>
-            <div className="dist-bar-wrap">
-              <div className="dist-bar-label">Distribución del riesgo</div>
-              <div className="dist-bar">
-                <div className="dist-zone low"  style={{ width: "33%" }} />
-                <div className="dist-zone mid"  style={{ width: "34%" }} />
-                <div className="dist-zone high" style={{ width: "33%" }} />
-                <div className="dist-marker" style={{ left: `${defuzzVal}%` }} />
+            {/* Col 2: Reglas activadas */}
+            <div>
+              <div className="fuzzy-col-label"><span className="fuzzy-col-num">2</span> Reglas activadas</div>
+              {fz.activatedRules.length === 0 ? (
+                <div style={{ padding: "20px 0", textAlign: "center", color: "var(--muted)", fontSize: ".85rem" }}>
+                  Sin reglas activas
+                </div>
+              ) : (
+                <table className="rules-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>SI exceso · reincidencia → severidad</th>
+                      <th style={{ minWidth: 80 }}>Activación</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fz.activatedRules.slice(0, 10).map(r => {
+                      const act = r.activacion ?? 0;
+                      const lvl = act >= 0.6 ? "high" : act >= 0.3 ? "medium" : "low";
+                      return (
+                        <tr key={r.id}>
+                          <td><div className="rule-id">{r.id}</div></td>
+                          <td>
+                            <div className="rule-desc" style={{ fontSize: ".74rem" }}>
+                              <strong>{setLabel(r.exceso_set)}</strong>
+                              {" · "}
+                              <strong>{setLabel(r.reincidencia_set)}</strong>
+                              {" → "}
+                              <em>{setLabel(r.severidad_set)}</em>
+                            </div>
+                          </td>
+                          <td>
+                            <div style={{ fontWeight: 700, fontSize: ".8rem", marginBottom: 3 }}>{act.toFixed(3)}</div>
+                            <div className="rule-activation-bar">
+                              <div className={`rule-activation-fill activation-fill-${lvl}`}
+                                style={{ width: `${Math.round(act * 100)}%` }} />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              <div className="rules-meta">
+                <div className="rules-meta-item"><GitBranch size={12} /> <strong>{fz.activatedRules.length}</strong> de 25 reglas activas</div>
+                <div className="rules-meta-item"><Zap size={12} /> Defuzz.: <strong>Centroide</strong></div>
               </div>
-              <div className="dist-labels"><span>Bajo</span><span>Medio</span><span>Alto</span></div>
             </div>
-            {event.suggestedPenaltyDays > 0 ? (
-              <div className="penalty-card">
-                <ClipboardList size={28} color="var(--uta-red)" />
+
+            {/* Col 3: Salida difusa y resultado */}
+            <div>
+              <div className="fuzzy-col-label"><span className="fuzzy-col-num">3</span> Resultado difuso</div>
+
+              {/* Output membership chart */}
+              <div className="fuzzy-output-chart-wrap">
+                <div style={{ fontSize: ".72rem", color: "var(--muted)", marginBottom: 4, fontWeight: 600 }}>
+                  Función de severidad [0 – 100]
+                </div>
+                <MembershipChart domain={[0, 100]} sets={severidadSets} currentVal={fz.crispOutput} />
+                <MembershipLegend sets={severidadSets} memberships={{}} />
+              </div>
+
+              {/* Crisp value */}
+              {crispPct !== null && (
+                <div className="fuzzy-crisp-wrap">
+                  <div className="fuzzy-crisp-label">
+                    <span>Valor defuzzificado</span>
+                    <strong>{fz.crispOutput?.toFixed(1)}</strong>
+                  </div>
+                  <div className="fuzzy-crisp-bar">
+                    <div className="fuzzy-crisp-fill" style={{ width: `${crispPct}%` }} />
+                    <div className="fuzzy-crisp-marker" style={{ left: `${crispPct}%` }} />
+                  </div>
+                  <div className="fuzzy-crisp-range"><span>0</span><span>100</span></div>
+                </div>
+              )}
+
+              {/* Risk level */}
+              <div className="fuzzy-result-risk" style={{ background: riskColor + "18", borderColor: riskColor + "40" }}>
+                <div className="risk-shield" style={{ color: riskColor }}><ShieldAlert size={26} /></div>
                 <div>
-                  <div className="penalty-days">{event.suggestedPenaltyDays}</div>
-                  <div className="penalty-unit">días de suspensión sugeridos</div>
+                  <div className="risk-level-label" style={{ color: riskColor }}>
+                    {event.riskLevel?.toUpperCase() ?? "—"}
+                  </div>
+                  <div className="risk-membership" style={{ fontSize: ".72rem" }}>
+                    Nivel de riesgo del sistema difuso
+                  </div>
                 </div>
               </div>
-            ) : (
-              <div className="penalty-card">
-                <Check size={28} color="var(--green)" />
-                <div>
-                  <div className="penalty-days" style={{ color: "var(--green)", fontSize: "1rem" }}>Sin sanción</div>
-                  <div className="penalty-unit">dentro de parámetros</div>
+
+              {/* Days / penalty card */}
+              {fz.suggestedPenaltyDays > 0 ? (
+                <div className="penalty-card">
+                  <ClipboardList size={28} color="var(--uta-red)" />
+                  <div>
+                    <div className="penalty-days">{fz.suggestedPenaltyDays}</div>
+                    <div className="penalty-unit">días de suspensión sugeridos</div>
+                  </div>
                 </div>
-              </div>
-            )}
-            <div className="decision-basis">
-              <Info size={14} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span><strong>Base de decisión:</strong> {fz.activatedRules?.[0] ?? "Evaluación del sistema difuso completada."}</span>
+              ) : (
+                <div className="penalty-card" style={{ border: "1.5px solid #bbf7d0", background: "#f0fdf4" }}>
+                  <Check size={28} color="#16a34a" />
+                  <div>
+                    <div className="penalty-days" style={{ color: "#16a34a", fontSize: "1rem" }}>
+                      Advertencia
+                    </div>
+                    <div className="penalty-unit">sin días de suspensión</div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

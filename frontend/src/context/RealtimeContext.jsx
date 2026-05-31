@@ -64,20 +64,14 @@ function mapBackendEvent(raw) {
       ocr:           raw.vision?.resultado_ocr ?? raw.placa_ocr,
     },
     fuzzySystem: {
-      speedExcess:         raw.fuzzy?.exceso_velocidad ?? 0,
-      speedMembership:     raw.fuzzy?.pertenencia_velocidad
-        ? Object.entries(raw.fuzzy.pertenencia_velocidad).sort(([,a],[,b]) => b - a)[0]?.[0] ?? "normal"
-        : "normal",
-      ocrMembership:       raw.fuzzy?.pertenencia_confianza_ocr
-        ? Object.entries(raw.fuzzy.pertenencia_confianza_ocr).sort(([,a],[,b]) => b - a)[0]?.[0] ?? "alta"
-        : "alta",
-      recurrenceMembership: raw.fuzzy?.pertenencia_reincidencia
-        ? Object.entries(raw.fuzzy.pertenencia_reincidencia).sort(([,a],[,b]) => b - a)[0]?.[0] ?? "normal"
-        : "normal",
-      risk:            raw.fuzzy?.nivel_riesgo     ?? raw.nivel_riesgo,
-      suggestedPenalty: raw.fuzzy?.dias_sancion_sugeridos ? `${raw.fuzzy.dias_sancion_sugeridos} dias` : "sin sancion",
-      activatedRules:  raw.fuzzy?.reglas_activadas ?? [],
-      crispOutput:     raw.fuzzy?.salida_crisp ?? null,
+      speedExcess:            raw.fuzzy?.exceso_velocidad ?? 0,
+      risk:                   raw.fuzzy?.nivel_riesgo ?? raw.nivel_riesgo,
+      suggestedPenaltyDays:   raw.fuzzy?.dias_sancion_sugeridos ?? 0,
+      activatedRules:         raw.fuzzy?.reglas_activadas ?? [],
+      crispOutput:            raw.fuzzy?.salida_crisp ?? null,
+      esTemeraria:            raw.fuzzy?.es_temeraria ?? (raw.velocidad >= 50),
+      pertenenciaExceso:      raw.fuzzy?.pertenencia_velocidad ?? {},
+      pertenenciaReincidencia: raw.fuzzy?.pertenencia_reincidencia ?? {},
     },
     audit: [],
   };
