@@ -1,10 +1,11 @@
 """
-Punto inicial del pipeline EN VIVO para el backend.
+Punto de entrada del modulo de vision.
 
-La camara decide cuando existe un cruce. La integracion con DB, WebSocket y
-MJPEG vive en `integration.py` para no mezclar responsabilidades aqui.
+Arranca el servidor MJPEG y el loop de camara. La API consume el video
+en /api/cameras/main/stream (proxy hacia stream_server) y recibe eventos
+por WebSocket cuando un carro completa el cruce.
 
-Ejecutar desde `backend/`:
+Ejecutar desde backend/:
     python -m src.vision.main
     python -m src.vision.main video.mp4
     python -m src.vision.main http://192.168.x.x:4747/video
@@ -31,10 +32,14 @@ USAR_FILTROS = True
 
 from camara import iniciar
 import cadena
-from integration import hacer_al_capturar, broadcast_status, set_current_frame
+import stream_server
+from integration import hacer_al_capturar, broadcast_status
 
 
 if __name__ == "__main__":
+    # arrancar el servidor MJPEG antes del loop de camara
+    stream_server.start()
+
     modelos = cadena.cargar_modelos(usar_filtros=USAR_FILTROS)
     print("Modelos cargados.")
 
@@ -50,6 +55,6 @@ if __name__ == "__main__":
         detector=detectar_en_vivo,
         al_capturar=hacer_al_capturar(modelos),
         fuente=fuente,
-        on_frame=set_current_frame,
-        on_fps=broadcast_status,
+        on_frame=stream_server.set_frame,   # cada frame anotado -> MJPEG
+        on_fps=broadcast_status,            # ~1/s -> status WebSocket
     )

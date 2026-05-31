@@ -13,7 +13,7 @@ import React, { createContext, useCallback, useContext, useEffect, useReducer, u
 import { wsService } from "../services/ws";
 import { events as MOCK_EVENTS, systemStatus as MOCK_STATUS } from "../mocks/mockData";
 
-const VIDEO_URL = import.meta.env.VITE_VIDEO_URL ?? `http://${window.location.hostname}:8000/video_feed`;
+const VIDEO_URL = import.meta.env.VITE_VIDEO_URL ?? `http://${window.location.hostname}:8000/api/cameras/main/stream`;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

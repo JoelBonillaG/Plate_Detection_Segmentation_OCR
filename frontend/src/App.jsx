@@ -263,7 +263,7 @@ function VideoPanel({ videoUrl, event }) {
           <div className="live-dot" />
           <span style={{ fontSize: ".875rem", fontWeight: 700 }}>Video en vivo</span>
         </div>
-        <span className="stream-tag">MJPEG /video_feed</span>
+        <span className="stream-tag">MJPEG /api/cameras/main/stream</span>
       </div>
       <div className="video-frame" ref={containerRef}>
         <img
@@ -535,7 +535,7 @@ function HumanReviewBox({ event }) {
     setStatus("loading");
     setMsg("");
     try {
-      const res = await fetch(`${API}/events/${dbId}/${action}`, {
+      const res = await fetch(`${API}/api/events/${dbId}/${action}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1078,7 +1078,7 @@ function SettingsView() {
       <div className="card">
         <div style={{ display: "grid", gap: 14, maxWidth: 600, padding: 18 }}>
           {[
-            { label: "Endpoint de video (MJPEG)", val: "/video_feed" },
+            { label: "Endpoint de video (MJPEG)", val: "/api/cameras/main/stream" },
             { label: "WebSocket",                 val: "/ws" },
             { label: "Límite de velocidad campus", val: "50 km/h" },
             { label: "Umbral confianza OCR",       val: "0.85" },
