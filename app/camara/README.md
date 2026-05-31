@@ -119,4 +119,11 @@ del OCR, etc.) con el mismo `nombre` de carro.
 |---|---|---|
 | Velocidad del último carro | ✅ | ✅ **siempre** |
 | Líneas ENTRA/SALE + estado | ✅ | ✅ |
+| Caja del **carro** (naranja, solo dentro de la zona) | ✅ | ✅ |
+| Caja de la **placa** (verde, solo dentro de la zona) | ✅ | ✅ |
 | Sliders, puntos magenta, ancho/nitidez/distancia | ✅ | ❌ |
+
+Las cajas **naranja** (carro, ETAPA 0) y **verde** (placa) solo se dibujan cuando
+su centro cae dentro de la zona ENTRA–SALE. YOLO igual corre sobre todo el frame:
+la zona filtra qué se dibuja y la captura se dispara al cruzar SALE (la placa se
+sigue rastreando aunque salga de la zona, para no perder el cruce).

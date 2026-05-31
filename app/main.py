@@ -42,7 +42,8 @@ if __name__ == "__main__":
         return cadena.procesar_frame(nombre, frame, m)
 
     def detectar_en_vivo(frame):
-        # Detector que alimenta las lineas EN VIVO (carro -> placa con zoom).
+        # Detector que alimenta las lineas EN VIVO: devuelve (carro, placa) para
+        # dibujar ambas cajas y rastrear la placa (carro -> placa con zoom).
         return cadena.detectar_placa_en_vivo(frame, m)
 
     # fuente de video: argumento de linea de comandos (default = webcam 0)

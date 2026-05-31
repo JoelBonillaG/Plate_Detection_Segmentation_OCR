@@ -22,6 +22,8 @@ from lineas import ZonaDeteccion, nitidez
 # colores BGR
 COLOR_LINEA   = (0, 200, 255)   # amarillo-naranja
 COLOR_ZONA    = (0, 255, 0)     # verde (cuando esta rastreando)
+COLOR_PLACA   = (0, 255, 0)     # verde: caja de la placa (lo que se rastrea)
+COLOR_CARRO   = (255, 128, 0)   # naranja: caja del carro (solo visual)
 COLOR_TEXTO   = (255, 255, 255)
 COLOR_HANDLE  = (255, 0, 255)   # magenta: puntos arrastrables
 
@@ -31,11 +33,11 @@ VENTANA_H     = 900
 
 # lineas inclinadas (fracciones del frame). Calibrar con el video real.
 #   ENTRA = lejos (arriba),  SALE = cerca (hacia la camara)
-LINEA_ENTRA   = ((0.30, 0.15), (0.20, 0.62))
-LINEA_SALE    = ((0.62, 0.28), (0.52, 0.98))
+LINEA_ENTRA   = ((0.341875, 0.10888888888888888), (0.28875, 0.5722222222222222))
+LINEA_SALE    = ((0.63875, 0.9688888888888889), (0.71625, 0.23555555555555555))
 
 # gates iniciales (se pueden mover con los sliders en modo calibracion)
-MIN_ANCHO_PX  = 80
+MIN_ANCHO_PX  = 20
 MAX_ANCHO_PX  = 0      # 0 = sin tope
 MIN_NITIDEZ   = 40
 
@@ -216,7 +218,9 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     Abre la fuente de video y corre el loop principal.
 
     Args:
-        detector: funcion que recibe un frame BGR y devuelve (x1,y1,x2,y2) o None.
+        detector: funcion(frame) -> (carro_bbox, placa_bbox) en coords del frame;
+                  cualquiera puede ser None. Se rastrea la placa; la caja del
+                  carro es solo visual.
         al_capturar: callback (nombre, frame) que corre el pipeline (etapa 1 -> OCR).
         carpeta_captura: donde se guarda el frame crudo (por defecto camara/capturas/).
         fuente: de donde sale el video. Puede ser:
@@ -248,7 +252,8 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
                          min_ancho_px=MIN_ANCHO_PX, max_ancho_px=MAX_ANCHO_PX,
                          min_nitidez=MIN_NITIDEZ, distancia_m=DISTANCIA_M)
     capturas_guardadas = 0
-    bbox        = None
+    bbox        = None    # placa (lo que se rastrea)
+    carro_bbox  = None    # carro (solo visual)
     n_frame     = 0
 
     print("Fuente abierta. Q=salir.", "Calibracion ON (s=guardar config)." if CALIBRAR else "")
@@ -274,7 +279,7 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         t = (n_frame / fps) if es_archivo else time.time()
 
         if detector is not None and n_frame % INFERENCIA_CADA == 0:
-            bbox = detector(frame)
+            carro_bbox, bbox = detector(frame)
 
         captura = zona.actualizar(frame, bbox, t)
 
@@ -286,14 +291,23 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         # --- dibujar ---
         dibujar_lineas(frame, zona, calibrar=CALIBRAR)
 
+        # caja del carro (naranja): solo si su centro cae dentro de la zona
+        if carro_bbox is not None:
+            cx1, cy1, cx2, cy2 = carro_bbox
+            ccx, ccy = (cx1 + cx2) / 2, (cy1 + cy2) / 2
+            if zona.punto_en_zona(ccx, ccy, VENTANA_W, VENTANA_H):
+                cv2.rectangle(frame, (cx1, cy1), (cx2, cy2), COLOR_CARRO, 2)
+                cv2.putText(frame, "Carro", (cx1, max(cy1 - 8, 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLOR_CARRO, 2)
+
         # dibujar la placa SOLO si su centro cae dentro de la zona ENTRA-SALE
         if bbox is not None:
             x1, y1, x2, y2 = bbox
             xc, yc = (x1 + x2) / 2, (y1 + y2) / 2
             if zona.punto_en_zona(xc, yc, VENTANA_W, VENTANA_H):
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR_PLACA, 2)
                 cv2.putText(frame, "Placa", (x1, y1 - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLOR_PLACA, 2)
 
         dibujar_velocidad(frame, zona)   # velocidad: siempre visible (demo incluida)
 

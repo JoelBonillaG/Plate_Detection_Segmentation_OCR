@@ -115,16 +115,17 @@ def detectar_placa_en_vivo(frame, m):
     """
     Detector para el rastreo EN VIVO: carro primero, luego placa DENTRO del
     carro (zoom -> placa mas grande, menos falsos positivos del fondo).
-    Devuelve el bbox de placa en coords del frame completo, o None.
-    Lo usa main.py para alimentar las lineas; el batch no lo necesita.
+    Devuelve (carro_bbox, placa_bbox) en coords del frame completo; cualquiera
+    puede ser None. Lo usa main.py para alimentar las lineas (rastrea la placa)
+    y dibujar ambas cajas; el batch no lo necesita.
     """
-    # sin modelo de carros -> fallback: placa sobre el frame completo
+    # sin modelo de carros -> fallback: no hay caja de carro, placa sobre el frame
     if m.modelo_carros is None:
-        return etapa1.detectar(m.modelo, frame, m.conf)
+        return None, etapa1.detectar(m.modelo, frame, m.conf)
 
     carro = etapa0.detectar_carro(m.modelo_carros, frame, m.cfg_carros)
     if carro is None:
-        return None   # no hay carro -> no rastrear nada
+        return None, None   # no hay carro -> no rastrear nada
 
     # recorte del carro (con margen) + offset para volver al frame
     x1, y1, x2, y2 = carro
@@ -135,11 +136,12 @@ def detectar_placa_en_vivo(frame, m):
     cx2 = min(w, x2 + mx); cy2 = min(h, y2 + my)
     crop = frame[cy1:cy2, cx1:cx2]
     if crop.size == 0:
-        return None
+        return carro, None
 
     # placa DENTRO del carro
     pb = etapa1.detectar(m.modelo, crop, m.conf)
     if pb is None:
-        return None
+        return carro, None
     px1, py1, px2, py2 = pb
-    return (px1 + cx1, py1 + cy1, px2 + cx1, py2 + cy1)   # -> coords del frame
+    placa = (px1 + cx1, py1 + cy1, px2 + cx1, py2 + cy1)   # -> coords del frame
+    return carro, placa
