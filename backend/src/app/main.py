@@ -38,6 +38,7 @@ from .database import (
 from .mailer import EmailPayload, build_vehicle_notification_body, send_email
 from .realtime import get_current_frame, manager
 from .events_db import fetch_eventos, fetch_evento, _row_to_payload, approve_evento, reject_evento
+from .fuzzy import EXCESO, REINCI, SEVERIDAD, RULES, LIMITE_VELOCIDAD as FZ_LIMITE, UMBRAL_TEMERARIA as FZ_UMBRAL
 
 # URL del servidor MJPEG de vision (puede sobreescribirse con VISION_STREAM_URL)
 VISION_STREAM_URL = os.getenv("VISION_STREAM_URL", "http://localhost:8001/stream.mjpeg")
@@ -203,6 +204,86 @@ def reject_event(evento_id: str, body: ReviewRequest) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"status": "rejected"}
+
+
+# ── FIS: definiciones expuestas ───────────────────────────────────────────────
+
+_ETIQUETAS = {
+    # Exceso de velocidad
+    "no_excess": "Sin exceso", "minor": "Leve", "moderate": "Moderado",
+    "serious": "Grave", "critical": "Crítico",
+    # Reincidencia
+    "clean": "Limpio", "low": "Bajo", "high": "Alto", "chronic": "Crónico",
+    # Severidad
+    "no_action": "Sin acción", "warning": "Advertencia",
+    "low_susp": "Susp. baja", "medium_susp": "Susp. media",
+    "high_susp": "Susp. alta", "critical_susp": "Susp. crítica",
+}
+
+
+def _conjuntos(sets: dict) -> list[dict]:
+    return [
+        {"clave": k, "etiqueta": _ETIQUETAS.get(k, k), "tipo": v[0], "parametros": list(v[1])}
+        for k, v in sets.items()
+    ]
+
+
+@app.get("/api/difuso/definiciones")
+def difuso_definiciones() -> dict:
+    """
+    Devuelve las definiciones matemáticas del FIS Mamdani.
+    El frontend usa esto para renderizar las gráficas de funciones de membresía.
+    """
+    return {
+        "limite_velocidad": FZ_LIMITE,
+        "umbral_temeraria": FZ_UMBRAL,
+        "tipo_inferencia": "Mamdani",
+        "metodo_implicacion": "mínimo",
+        "metodo_agregacion": "máximo",
+        "defuzzificacion": "centroide",
+        "total_reglas": len(RULES),
+        "variables_entrada": {
+            "exceso_velocidad": {
+                "nombre": "Exceso de velocidad",
+                "universo": [0, 40],
+                "unidad": "km/h",
+                "conjuntos": _conjuntos(EXCESO),
+            },
+            "reincidencia": {
+                "nombre": "Reincidencia del conductor",
+                "universo": [0, 10],
+                "unidad": "infracciones previas",
+                "conjuntos": _conjuntos(REINCI),
+            },
+        },
+        "salida": {
+            "nombre": "Severidad de la sanción",
+            "universo": [0, 100],
+            "unidad": "índice",
+            "conjuntos": _conjuntos(SEVERIDAD),
+        },
+        "reglas": [
+            {
+                "id": f"R{i + 1}",
+                "exceso_set": es,
+                "reincidencia_set": rs,
+                "severidad_set": ss,
+                "descripcion": (
+                    f"SI exceso={_ETIQUETAS.get(es,es)} "
+                    f"Y reincidencia={_ETIQUETAS.get(rs,rs)} "
+                    f"→ {_ETIQUETAS.get(ss,ss)}"
+                ),
+            }
+            for i, (es, rs, ss) in enumerate(RULES)
+        ],
+        "conversion_dias": [
+            {"rango": [0, 29],   "dias": 0, "descripcion": "Advertencia — sin suspensión"},
+            {"rango": [30, 52],  "dias": 1, "descripcion": "1 día de suspensión"},
+            {"rango": [53, 74],  "dias": 2, "descripcion": "2 días de suspensión"},
+            {"rango": [75, 90],  "dias": 3, "descripcion": "3 días de suspensión"},
+            {"rango": [91, 100], "dias": 4, "descripcion": "4 días de suspensión (máxima)"},
+        ],
+    }
 
 
 # ── Notificaciones ────────────────────────────────────────────────────────────

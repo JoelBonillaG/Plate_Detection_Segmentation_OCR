@@ -24,8 +24,6 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import cadena
 
-LIMITE_VELOCIDAD = 50.0
-
 try:
     from src.app.realtime import broadcast_event, broadcast_status, set_current_frame
     from src.app.events_db import (
@@ -34,12 +32,16 @@ try:
         insert_evento,
         insert_vision,
         lookup_vehiculo_id,
+        lookup_vehiculo_info,
     )
+    from src.app.fuzzy import evaluar as fuzzy_evaluar, LIMITE_VELOCIDAD
+    from src.app.mailer import EmailPayload, send_email, build_congratulation_body
 
     REALTIME_ENABLED = True
     print("[REALTIME] Integracion con FastAPI activa.")
 except ImportError:
     REALTIME_ENABLED = False
+    LIMITE_VELOCIDAD = 20.0
     print("[REALTIME] FastAPI no disponible; modo standalone.")
 
     def broadcast_event(data): pass
@@ -49,35 +51,20 @@ except ImportError:
     def insert_vision(**kw): pass
     def insert_difuso(**kw): pass
     def lookup_vehiculo_id(placa): return None
+    def lookup_vehiculo_info(vehiculo_id): return None
     def count_reincidencias(placa): return 0
+    def send_email(payload): pass
+    def build_congratulation_body(data): return ""
 
+    class EmailPayload:  # noqa: F811
+        def __init__(self, **kw): pass
 
-def clasificar_evento(velocidad: float, limite: float, reincidencias: int) -> str:
-    exceso = velocidad - limite
-    if exceso <= 0:
-        return "normal"
-    if exceso <= 10:
-        return "advertencia"
-    if exceso <= 25 or reincidencias < 2:
-        return "infraccion"
-    return "grave"
+    class _FallbackResult:
+        tipo_evento = "normal"; nivel_riesgo = "bajo"; dias_sancion = 0
+        exceso = 0.0; es_temeraria = False; salida_crisp = 0.0
+        pertenencia_exceso = {}; pertenencia_reincidencia = {}; reglas_activadas = []
 
-
-def nivel_riesgo(tipo_evento: str, exceso: float, reincidencias: int) -> str:
-    if tipo_evento == "normal":
-        return "bajo"
-    if tipo_evento == "advertencia":
-        return "medio"
-    if tipo_evento == "grave" or (exceso > 20 and reincidencias >= 3):
-        return "critico"
-    return "alto"
-
-
-def dias_sancion(tipo_evento: str, reincidencias: int) -> int:
-    if tipo_evento in ("normal", "advertencia"):
-        return 0
-    base = 3 if tipo_evento == "infraccion" else 7
-    return min(base + reincidencias, 30)
+    def fuzzy_evaluar(velocidad, reincidencia): return _FallbackResult()
 
 
 def storage_path(evento_id: str, nombre: str) -> str:
@@ -134,11 +121,12 @@ def hacer_al_capturar(modelos):
             print(f"[DB] No se pudo consultar reincidencias: {exc}")
             reincidencias = 0
 
-        tipo_evento = clasificar_evento(velocidad, LIMITE_VELOCIDAD, reincidencias)
-        exceso = max(0.0, velocidad - LIMITE_VELOCIDAD)
-        riesgo = nivel_riesgo(tipo_evento, velocidad - LIMITE_VELOCIDAD, reincidencias)
-        sancion = dias_sancion(tipo_evento, reincidencias)
-        estado_rev = "automatica" if tipo_evento == "normal" else "pendiente"
+        # Sistema difuso Mamdani — evaluación completa
+        fz = fuzzy_evaluar(velocidad, reincidencias)
+        tipo_evento = fz.tipo_evento
+        riesgo      = fz.nivel_riesgo
+        sancion     = max(0, fz.dias_sancion)   # -1 (temeraria) → 0 para DB
+        estado_rev  = "automatica" if tipo_evento == "normal" else "pendiente"
 
         evento_id_full = f"EVT-{str(uuid.uuid4())[:8].upper()}"
         ruta_frame = guardar_frame(evento_id_full, "frame.jpg", frame)
@@ -204,27 +192,15 @@ def hacer_al_capturar(modelos):
                 },
             },
             "fuzzy": {
-                "exceso_velocidad": exceso,
-                "pertenencia_velocidad": {
-                    "normal": max(0.0, 1.0 - exceso / 10),
-                    "moderado": max(0.0, min(1.0, exceso / 10)),
-                    "severo": max(0.0, (exceso - 20) / 10),
-                },
-                "pertenencia_reincidencia": {
-                    "sin_reincidencia": 1.0 if reincidencias == 0 else 0.0,
-                    "reincidente": min(1.0, reincidencias / 3.0),
-                },
-                "pertenencia_confianza_ocr": {
-                    "baja": max(0.0, 1.0 - conf_ocr * 2),
-                    "media": max(0.0, min(1.0, conf_ocr)),
-                    "alta": max(0.0, conf_ocr - 0.5) * 2,
-                },
+                "exceso_velocidad": fz.exceso,
+                "pertenencia_velocidad": fz.pertenencia_exceso,
+                "pertenencia_reincidencia": fz.pertenencia_reincidencia,
+                "pertenencia_confianza_ocr": {},   # no usado en este FIS
                 "nivel_riesgo": riesgo,
                 "dias_sancion_sugeridos": sancion,
-                "reglas_activadas": [
-                    f"exceso={exceso:.1f} tipo={tipo_evento} reincidencias={reincidencias}"
-                ],
-                "salida_crisp": None,
+                "reglas_activadas": fz.reglas_activadas,
+                "salida_crisp": fz.salida_crisp,
+                "es_temeraria": fz.es_temeraria,
             },
         }
 
@@ -276,11 +252,32 @@ def hacer_al_capturar(modelos):
                     dias_sancion_sugeridos=sancion,
                     reglas_activadas=payload["fuzzy"]["reglas_activadas"],
                 )
+
+                # Correo automático para conductores dentro del límite
+                if tipo_evento == "normal" and vehiculo_id:
+                    try:
+                        info = lookup_vehiculo_info(vehiculo_id)
+                        if info and info.get("propietario_correo"):
+                            cuerpo = build_congratulation_body({
+                                "propietario_nombre": info["propietario_nombre"],
+                                "placa": placa_str,
+                                "velocidad": velocidad,
+                                "limite_velocidad": LIMITE_VELOCIDAD,
+                            })
+                            send_email(EmailPayload(
+                                to=info["propietario_correo"],
+                                subject=f"Conducción responsable en campus UTA — Placa {placa_str}",
+                                body=cuerpo,
+                            ))
+                            print(f"  [EMAIL] Felicitación enviada a {info['propietario_correo']}")
+                    except Exception as mail_exc:
+                        print(f"  [EMAIL] Error al enviar felicitación: {mail_exc}")
+
         except Exception as exc:
             print(f"[DB] No se pudo persistir evento {evento_id_full}: {exc}")
 
         broadcast_event(payload)
-        print(f"  [EVENTO] {evento_id_full}: placa={placa_str} vel={velocidad:.1f} km/h")
+        print(f"  [EVENTO] {evento_id_full}: placa={placa_str} vel={velocidad:.1f} km/h tipo={tipo_evento}")
         return texto
 
     return al_capturar
