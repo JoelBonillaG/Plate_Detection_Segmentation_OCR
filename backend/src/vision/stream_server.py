@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = 8001
 
@@ -60,7 +60,9 @@ class _Handler(BaseHTTPRequestHandler):
 
 def start(host: str = "0.0.0.0", port: int = PORT) -> None:
     """Arranca el servidor MJPEG en un daemon thread. Llamar una sola vez al inicio."""
-    server = HTTPServer((host, port), _Handler)
+    # ThreadingHTTPServer: un hilo por cliente. Con HTTPServer (single-thread) el
+    # stream MJPEG infinito del proxy bloqueaba cualquier otro request a :8001.
+    server = ThreadingHTTPServer((host, port), _Handler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     print(f"[STREAM] MJPEG en http://localhost:{port}/stream.mjpeg")

@@ -31,6 +31,13 @@ CAMARA_IDX    = 0   # 0 = camara por defecto (fallback si no se pasa fuente)
 VENTANA_W     = 1600
 VENTANA_H     = 900
 
+# stream MJPEG hacia el frontend: ancho y calidad JPEG del frame que se envia.
+# NO afecta el procesamiento (CNN/velocidad usan el frame full); solo aligera el
+# video que el browser debe decodificar. Mas chico/menor calidad = mas fluido.
+#   STREAM_W = 0 -> no redimensionar (manda al ancho de VENTANA_W).
+STREAM_W      = 640
+STREAM_JPEG_Q = 60
+
 # lineas inclinadas (fracciones del frame). Calibrar con el video real.
 #   ENTRA = lejos (arriba),  SALE = cerca (hacia la camara)
 LINEA_ENTRA   = ((0.341875, 0.10888888888888888), (0.28875, 0.5722222222222222))
@@ -50,7 +57,15 @@ FPS_FALLBACK  = 30.0   # si la fuente no reporta FPS
 INFERENCIA_CADA = 1
 
 # modo calibracion: sliders + arrastrar lineas + overlay de numeros
-CALIBRAR      = True
+CALIBRAR      = False
+
+# ventana OpenCV local (cv2.imshow). Es herramienta de DESARROLLO/calibracion.
+#   True  -> abre la ventana (necesaria para calibrar con sliders/mouse).
+#   False -> headless: solo alimenta el MJPEG. El loop nunca toca HighGUI, asi
+#            que minimizar/ocultar la ventana ya no puede frenar el stream del
+#            frontend. Salir con Ctrl+C (no hay tecla 'q' sin ventana).
+# El frontend consume el MJPEG igual en ambos casos.
+MOSTRAR_VENTANA = False
 
 VENTANA       = "Detector de Placas"
 
@@ -270,16 +285,19 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     fps_t0      = time.time()
     fps_frames  = 0
 
-    print("Fuente abierta. Q=salir.", "Calibracion ON (s=guardar config)." if CALIBRAR else "")
+    salir = "Q=salir." if MOSTRAR_VENTANA else "Ctrl+C=salir (headless, solo MJPEG)."
+    print("Fuente abierta.", salir, "Calibracion ON (s=guardar config)." if (CALIBRAR and MOSTRAR_VENTANA) else "")
     print(f"Capturas -> {carpeta_captura}")
 
-    cv2.namedWindow(VENTANA, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(VENTANA, VENTANA_W, VENTANA_H)
+    if MOSTRAR_VENTANA:
+        cv2.namedWindow(VENTANA, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(VENTANA, VENTANA_W, VENTANA_H)
 
-    if CALIBRAR:
-        _crear_trackbars(zona)
-        estado_mouse = {"arrastrando": None}
-        cv2.setMouseCallback(VENTANA, _hacer_mouse(estado_mouse, zona))
+        # sliders + mouse solo con ventana (HighGUI los necesita)
+        if CALIBRAR:
+            _crear_trackbars(zona)
+            estado_mouse = {"arrastrando": None}
+            cv2.setMouseCallback(VENTANA, _hacer_mouse(estado_mouse, zona))
 
     while True:
         ret, frame = cap.read()
@@ -328,9 +346,15 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         if CALIBRAR:
             dibujar_overlay(frame, zona, bbox)
 
-        # hook MJPEG: entregar el frame YA anotado (lineas + cajas) al backend
+        # hook MJPEG: entregar el frame YA anotado (lineas + cajas) al backend.
+        # Se encoge + baja calidad SOLO para el stream (el browser decodifica menos).
         if on_frame is not None:
-            ok_enc, buf = cv2.imencode(".jpg", frame)
+            stream_frame = frame
+            if STREAM_W and STREAM_W < VENTANA_W:
+                h_s = int(VENTANA_H * STREAM_W / VENTANA_W)
+                stream_frame = cv2.resize(frame, (STREAM_W, h_s))
+            ok_enc, buf = cv2.imencode(".jpg", stream_frame,
+                                       [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_Q])
             if ok_enc:
                 on_frame(buf.tobytes())
 
@@ -342,14 +366,16 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
                 on_fps(fps_frames / (ahora - fps_t0))
                 fps_t0, fps_frames = ahora, 0
 
-        cv2.imshow(VENTANA, frame)
-
-        tecla = cv2.waitKey(1) & 0xFF
-        if tecla == ord("q"):
-            break
-        if tecla == ord("s") and CALIBRAR:
-            _imprimir_config(zona)
+        # headless: sin imshow/waitKey -> el estado de la ventana no frena el loop
+        if MOSTRAR_VENTANA:
+            cv2.imshow(VENTANA, frame)
+            tecla = cv2.waitKey(1) & 0xFF
+            if tecla == ord("q"):
+                break
+            if tecla == ord("s") and CALIBRAR:
+                _imprimir_config(zona)
 
     cap.release()
-    cv2.destroyAllWindows()
+    if MOSTRAR_VENTANA:
+        cv2.destroyAllWindows()
     print(f"Capturas guardadas: {capturas_guardadas}")
