@@ -1,20 +1,29 @@
 """
 Dos lineas virtuales INCLINABLES (definidas por dos puntos cada una) y
-rastreo del mejor frame mientras un bbox de placa cruza la zona.
+rastreo del mejor frame mientras un CARRO cruza la zona.
+
+El CARRO maneja el cruce (entra/sale/velocidad): es grande y estable, casi no
+parpadea -> el tiempo de cruce sale confiable. La PLACA solo aporta el mejor
+crop para el OCR (chica, parpadea: no sirve para medir el cruce).
 
 Por que inclinables: en la vereda el carro se mueve en diagonal (lejos
 arriba -> cerca abajo). Lineas verticales no representan bien el carril.
 Cada linea se define por dos puntos en fracciones del frame, asi se
 alinea al carril a cualquier angulo. El cruce se prueba con el signo del
-producto cruz (de que lado de la recta esta el centro del bbox).
+producto cruz (de que lado de la recta esta el centro del carro).
+
+Parpadeo: si el detector pierde el carro un frame suelto, NO se suelta el
+rastreo al toque; se aguantan tolerancia_frames seguidos sin verlo antes de
+darlo por ido (asi el cronometro arranca temprano y la velocidad sale real).
 
 Direccion del trafico (Av. Chasquis, desde la vereda izq):
     ENTRA (lejos)  ->  zona dorada  ->  SALE (cerca, hacia la camara)
 
 Estado:
-    esperando  -> ninguna placa en zona
-    rastreando -> placa dentro de la zona, guardando el frame mas NITIDO
-    (al salir por SALE)-> devuelve el mejor frame; por ENTRA -> descarta
+    esperando  -> ningun carro en zona
+    rastreando -> carro dentro de la zona; se elige el mejor frame (placa nitida,
+                  o carro nitido como respaldo si la placa no aparece)
+    (al cruzar SALE)-> devuelve la captura; por ENTRA -> descarta (marcha atras)
 """
 
 import cv2

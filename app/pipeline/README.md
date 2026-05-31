@@ -15,9 +15,9 @@ cámara/imread (BGR)
    ▼  [ETAPA 1] deteccion_placas/   ── YOLOv11 (RED 1) + enderezado clásico
    │   detecta placa DENTRO del recorte del carro → recorta bbox → endereza a 300×100
    │   sale: placa horizontal (BGR)
-   ▼  [ETAPA intermedia] filtros/   ── limpieza + agrandado (clásico)
-   │   AQUÍ se convierte a GRIS. Denoise + agrandar + acentuar + normalizar
-   │   sale: placa gris ~840×280, limpia y normalizada
+   ▼  [ETAPA intermedia] filtros/   ── preprocesado suave (clásico)
+   │   AQUÍ se convierte a GRIS. Suavizado (bilateral) + acentuado leve (unsharp)
+   │   sale: placa gris, limpia y un poco más nítida (sin quemar)
    ▼  [ETAPA 2] segmentacion/       ── U-Net (RED 2)
    │   máscara de caracteres → cajas → crops por carácter
    │   sale: crops gris por carácter
@@ -81,7 +81,7 @@ clásico (`mask_to_boxes`: umbral + morfología + contornos + corte por proyecci
 | Frame de entrada | variable | las pruebas son 416×416 (dataset Roboflow) → placa diminuta → borrosa inevitablemente. Cámara HD = recorte nítido. |
 | bbox YOLO | en coords del **frame original** | YOLO infiere a 416 pero devuelve la caja en resolución original; el recorte sale del frame original. |
 | Enderezada | **300×100 fijo** (3:1) | no cambiar: el resto del pipeline asume estas dimensiones. |
-| Filtrada | **alto 280**, ancho proporcional (≈840×280) | conserva el 3:1 de la enderezada. |
+| Filtrada | igual que la enderezada (×`agrandar_factor` si está activo) | preprocesado suave, conserva el 3:1. |
 | Input U-Net | **256×96** (W×H) | el U-Net **redimensiona solo** por dentro; NO hace falta darle ese tamaño. Las cajas vuelven a la escala de la imagen que le pasas → conviene darle la filtrada **grande** para crops nítidos. |
 | Crops de carácter | variable | recorte de cada caja sobre la imagen filtrada. |
 | Input CNN OCR | **64×64×1** | gris; `prepare_crop` re-encuadra cada carácter. 36 clases (0-9, A-Z). |
@@ -94,22 +94,27 @@ pocos píxeles reales. Redimensionar nunca agrega detalle. El arreglo de raíz e
 
 ## La etapa de filtros (qué hace y por qué)
 
-Entrada: enderezada 300×100 (BGR). Todo es **automático y por-imagen** (no se
-elige filtro ni fuerza a mano):
+Entrada: enderezada 300×100 (BGR). Preprocesado **suave**: limpiar y acentuar un
+poco, **sin quemar** la placa. Cada paso se puede apagar por `config.json`.
 
 1. **BGR → gris**.
-2. **Denoise adaptativo** (Non-Local Means): estima el ruido real (Immerkaer) y
-   dosifica → no borra trazos en placas limpias, limpia fuerte las ruidosas.
-3. **Agrandar** (Lanczos) a `alto_objetivo` (280) → caracteres con más píxeles
-   para MSER/U-Net y crops más nítidos.
-4. **Acentuar** (unsharp): la fuerza sale del desenfoque medido **sobre la imagen
-   ya limpia** (así el ruido no engaña la métrica).
-5. **Normalizar iluminación** (división por fondo, closing kernel 51): fondo
-   blanco parejo + carácter negro sólido, aunque el recorte traiga carrocería
-   alrededor. Esto ayuda a Otsu/U-Net, que asumen oscuro-sobre-claro.
+2. **Suavizar** (`bilateralFilter`): quita ruido **respetando los bordes** de las
+   letras (a diferencia de un blur normal, que las desdibuja).
+3. **Acentuar** (unsharp, `amount` ≈ 0.5): resalta los bordes de los caracteres
+   con fuerza baja para **no empujar los claros a blanco**.
+4. **Agrandar** (opcional, `INTER_CUBIC`): caracteres con más píxeles. Ojo: el
+   clasificador re-escala cada carácter a su tamaño fijo igual, así que agrandar
+   aporta poco al OCR (más útil para la segmentación). Por defecto puede ir
+   apagado.
 
-Por qué ahí: las dos redes downstream (U-Net y CNN) y los umbrales clásicos
-asumen **carácter oscuro / fondo claro** → el filtro entrega justo eso.
+Por qué suave: la versión anterior normalizaba la iluminación (división por
+fondo) y subía mucho el contraste → la placa se volvía **blanca** y las letras
+finas **desaparecían**. Mejor poco y parejo: el OCR lee mejor una placa natural
+y nítida que una quemada.
+
+Tuneo rápido (solo `config.json`, sin tocar código): si aún come letras, bajá
+`acentuar_amount`; si querés más definición, subilo; si suaviza de más, bajá
+`suavizar_sigma`; para apagar un paso, su flag a `false`.
 
 ---
 
@@ -144,7 +149,7 @@ python pipeline/ocr/test_plate.py --image <placa.png>
 | `deteccion_carros/detecciones/<n>.jpg` | frame con la caja del carro (auditoría) |
 | `deteccion_placas/detecciones/<n>.jpg` | **recorte del carro** con el bbox de la placa dibujado |
 | `deteccion_placas/enderezadas/<n>.jpg` | placa horizontal 300×100 (BGR) |
-| `filtros/filtradas/<n>.jpg` | placa gris limpia, agrandada, normalizada |
+| `filtros/filtradas/<n>.jpg` | placa gris suavizada y acentuada (suave) |
 | `segmentacion/segmentadas/<n>/NN.png` | crops gris por carácter |
 | `ocr/salidas/<n>.txt` | **texto de la placa** |
 
@@ -159,8 +164,8 @@ propio `config.json`; las rutas de modelo son **relativas a esa etapa**.
   `imgsz` (640), `margen`, `detecciones`.
 - **Detección placas/enderezado:** `deteccion_placas/config.json` → `modelo`,
   `conf_min`, `imgsz` (416), `margen`, `ancho_placa` (300), `alto_placa` (100).
-- **Filtros:** `filtros/config.json` → `alto_objetivo`, `amount_min/max`,
-  `nitido_ok`, `ruido_ref`, `norm_kernel`, toggles `denoise/acentuar/normalizar`.
+- **Filtros:** `filtros/config.json` → toggles `suavizar/acentuar/agrandar` +
+  sus parámetros (`suavizar_sigma`, `acentuar_amount`, `agrandar_factor`, …).
 - **Segmentación:** defaults en `segmentacion/__init__.py` (`_CFG_DEF`):
   `threshold` 0.50, `min_area_ratio` 0.002, `padding` 0.08, `char_aspect` 0.60.
 

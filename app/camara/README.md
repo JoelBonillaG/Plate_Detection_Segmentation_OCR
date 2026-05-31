@@ -1,8 +1,9 @@
 # Cámara — captura por líneas virtuales
 
-Abre una fuente de video, dibuja dos líneas inclinadas y dispara la captura del
-frame más nítido cuando una placa cruza la zona. El frame capturado se pasa al
-pipeline (etapa 1 → OCR).
+Abre una fuente de video, dibuja dos líneas inclinadas y dispara la captura
+cuando un **carro** cruza la zona. El **carro** manda el cruce y la velocidad
+(es grande y estable, casi no parpadea); la **placa** solo aporta el mejor crop
+para el OCR. El frame capturado se pasa al pipeline (etapa 0 → OCR).
 
 ## Ejecutar
 
@@ -26,18 +27,29 @@ Una sola app; solo cambia el argumento `fuente`.
 | `LINEA_SALE` | línea **cercana**: el carro sale, dispara la captura | "sale" = cierra y manda al OCR |
 
 Cada línea = dos puntos `((x1,y1),(x2,y2))` en fracciones `0..1` del frame
-(`0`=izq/arriba, `1`=der/abajo). Inclinables para seguir el carril.
+(`0`=izq/arriba, `1`=der/abajo). Inclinables para seguir el carril. El cruce se
+prueba con el **centro del carro**: cuando cruza ENTRA empieza a rastrear, cuando
+cruza SALE dispara la captura.
+
+### Parpadeo — *no perder el carro por un frame*
+El detector a veces pierde el carro un frame suelto (parpadeo). En vez de soltar
+el rastreo al toque, se aguantan unos frames seguidos sin detección antes de
+darlo por ido. Así el cronómetro arranca temprano y la velocidad sale real (si
+reseteara, re-arrancaría tarde → tiempo corto → velocidad inflada).
+
+| Param | Qué hace |
+|---|---|
+| `tolerancia_frames` | frames seguidos SIN carro que aguanta sin resetear (el carro casi no parpadea → con 2-3 alcanza) |
 
 ### Gates — *cuándo* aceptar  (*gate = compuerta / filtro de paso*)
-| Param | Qué filtra | Por qué el nombre |
-|---|---|---|
-| `MIN_ANCHO_PX` | placa más chica = muy lejos → ignora | ancho mínimo de placa en píxeles |
-| `MAX_ANCHO_PX` | placa más grande = muy cerca / de perfil → ignora (`0`=sin tope) | ancho máximo en px |
-| `MIN_NITIDEZ` | frame más borroso que esto → descarta | nitidez mínima (anti motion-blur) |
+| Param | Qué filtra |
+|---|---|
+| `MIN_ANCHO_PX` | ancho mínimo de la **placa** para que su crop valga la pena para el OCR (placa muy chica = ilegible). Ya **no** controla el cruce: eso lo maneja el carro. |
+| `MAX_ANCHO_PX` | *(en desuso)* quedaba del rastreo por placa. |
+| `MIN_NITIDEZ` | *(en desuso)* antes descartaba capturas borrosas; ahora siempre se guarda. |
 
-**Nitidez** = varianza del Laplaciano del crop de la placa. Alto = enfocado,
-bajo = borroso. Se usa para 1) elegir el mejor frame del cruce y 2) descartar si
-todo salió borroso.
+**Nitidez** = varianza del Laplaciano. Sirve para **elegir el mejor frame** del
+cruce (el más nítido), no para descartar.
 
 ### Velocidad — *qué tan rápido*
 | Param | Qué es | Por qué el nombre |
@@ -46,10 +58,10 @@ todo salió borroso.
 | `FPS_FALLBACK` | FPS asumido si la fuente no lo reporta | convierte frames → segundos |
 
 Cálculo: `velocidad_km/h = DISTANCIA_M / (t_sale − t_entra) × 3.6`.
-Se mide al cruzar SALE (mismo disparo de la captura). El tiempo se toma según
-la fuente: **video** → `frame/FPS` (confiable, FPS fijo); **vivo (celu/webcam)**
-→ reloj real (aproximado, el FPS del WiFi varía). Sale `n/d` si el carro no
-cruzó ambas líneas limpio.
+Se mide con el **centro del carro**: arranca al cruzar ENTRA, para al cruzar
+SALE. El tiempo se toma según la fuente: **video** → `frame/FPS` (confiable, FPS
+fijo); **vivo (celu/webcam)** → reloj real (aproximado, el FPS del WiFi varía).
+Sale `n/d` si el carro no cruzó ambas líneas limpio.
 
 ### Control
 | Param | Qué hace |
@@ -59,9 +71,10 @@ cruzó ambas líneas limpio.
 
 ## Idea clave
 
-- **Líneas = espacio** (dónde capturar).
-- **Gates = calidad** (tamaño + nitidez suficientes).
-- **Captura** = mejor frame entre las líneas que pase los gates.
+- **Carro = cuándo** (cruza ENTRA→SALE: marca el tiempo y dispara la captura).
+- **Placa = qué leer** (aporta el mejor crop para el OCR).
+- **Captura** = el frame más nítido del cruce (con placa si la hubo; si no, el
+  frame de carro más nítido como respaldo).
 
 ## Calibrar (modo debug, `CALIBRAR=True`)
 
@@ -77,11 +90,12 @@ Teclas: `s` guarda config (solo en calibración), `q` sale.
 ## Flujo
 
 ```
-carro lejos      → placa chica → gate de tamaño la bloquea (espera)
-cruza ENTRA       → arranca cronómetro (t_entra), guarda frame de entrada
-carro en zona    → mide nitidez por frame → guarda el más nítido
-cruza SALE        → guarda frame de salida, para cronómetro (t_sale) → velocidad
-                  → ¿mejor frame ≥ MIN_NITIDEZ? sí→guarda + OCR  no→descarta
+carro cruza ENTRA → arranca cronómetro (t_entra), guarda frame de entrada
+carro en zona     → cada frame: ¿hay placa? mide su nitidez → guarda el más nítido
+                    (si la placa no aparece, guarda el frame de carro más nítido)
+parpadeo (1 frame sin carro) → aguanta (no resetea) hasta tolerancia_frames
+carro cruza SALE  → guarda frame de salida, para cronómetro (t_sale) → velocidad
+                  → arma la captura y la manda al OCR (siempre se guarda)
 ```
 
 ## Qué se guarda (una carpeta por carro)
@@ -92,21 +106,26 @@ capturas/
     entra.jpg     ← frame al cruzar ENTRA (lejos)
     mejor.jpg     ← frame más nítido → el que va al OCR
     sale.jpg      ← frame al cruzar SALE (cerca)
-    datos.json    ← placa, velocidad, nitidez, ancho px, tiempos, hora
+    datos.json    ← velocidad, nitidez, ancho px, tiempo de cruce, hora
 ```
 
 `datos.json` (solo métricas de la **cámara**, sin el número de placa):
 ```json
 {
   "carro": "20260530_102215_carro001",
+  "con_placa": true,
   "velocidad_kmh": 38.4,
+  "tiempo_cruce_s": 0.47,
   "nitidez": 145.2,
   "ancho_placa_px": 210,
-  "t_entra_s": 1.23,
-  "t_sale_s": 1.70,
   "hora": "2026-05-30 10:22:15"
 }
 ```
+
+- **`con_placa`**: `true` = el mejor frame tenía placa detectada (lo normal).
+  `false` = nunca se vio la placa en el cruce y se guardó el frame de carro más
+  nítido como respaldo (el OCR quizá no lea, pero la velocidad sí sale). Con
+  `con_placa: false`, `ancho_placa_px` es `0`.
 
 **La cámara detecta la placa (dónde está) pero NO lee el número.** Leer el texto
 es trabajo del pipeline (OCR), una capa aparte; por eso no aparece en este JSON.
