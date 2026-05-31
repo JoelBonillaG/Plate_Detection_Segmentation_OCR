@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(DIR, "pipeline"))
 # Flag de prueba: filtros a veces empeora el OCR (ver cadena.py).
 # True  -> enderezada -> filtros -> segmentacion
 # False -> enderezada -> segmentacion (cruda, sin filtros)
-USAR_FILTROS = False
+USAR_FILTROS = True
 
 from camara import iniciar
 import cadena

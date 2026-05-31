@@ -44,11 +44,18 @@ class ZonaDeteccion:
     Args:
         linea_entra: ((x1,y1),(x2,y2)) en fracciones [0..1]. Linea LEJANA.
         linea_sale:  ((x1,y1),(x2,y2)) en fracciones [0..1]. Linea CERCANA.
-        min_ancho_px: ancho minimo del bbox de placa para rastrear (gate lejos).
-        max_ancho_px: ancho maximo; mas alla la placa ya va a perfil (0 = sin tope).
-        min_nitidez:  umbral; si el mejor frame queda por debajo, se descarta.
+        min_ancho_px: ancho minimo de la PLACA para que su crop valga la pena
+                      para el OCR (placa muy chica = ilegible). Ya NO controla el
+                      cruce: eso lo maneja el carro.
+        max_ancho_px: (en desuso) quedaba del rastreo por placa.
+        min_nitidez:  (en desuso) antes descartaba capturas borrosas.
         distancia_m:  distancia REAL en metros entre las dos lineas (calibrable).
-                      Sirve para calcular velocidad = distancia / tiempo de cruce.
+                      velocidad = distancia / tiempo de cruce DEL CARRO.
+        tolerancia_frames: frames seguidos SIN carro que se aguantan antes de
+                      soltar el rastreo (absorbe parpadeos del detector).
+
+    El CARRO maneja el cruce (entra/sale/velocidad): grande y estable, casi no
+    parpadea. La PLACA solo aporta el mejor crop para el OCR cuando aparece.
     """
 
     def __init__(self,
@@ -57,20 +64,26 @@ class ZonaDeteccion:
                  min_ancho_px=80,
                  max_ancho_px=0,
                  min_nitidez=40.0,
-                 distancia_m=5.0):
+                 distancia_m=5.0,
+                 tolerancia_frames=3):
         self.linea_entra = linea_entra
         self.linea_sale  = linea_sale
         self.min_ancho_px = min_ancho_px
         self.max_ancho_px = max_ancho_px
         self.min_nitidez  = min_nitidez
         self.distancia_m  = distancia_m
+        # parpadeo: cuantos frames seguidos SIN carro aguanta sin soltar el
+        # rastreo. El carro casi no parpadea -> con 2-3 alcanza. 0 = sin tolerancia.
+        self.tolerancia_frames = tolerancia_frames
 
         self._estado        = "esperando"   # esperando | rastreando
         self._mejor_frame   = None
         self._mejor_nitidez = 0.0
         self._mejor_ancho   = 0       # ancho de placa (px) en el mejor frame
+        self._mejor_tiene_placa = False  # ¿el mejor frame tenia placa? (vs respaldo de carro)
         self._frame_entra   = None    # primer frame al entrar a la zona
         self._frame_sale    = None    # frame al cruzar la linea SALE
+        self._perdidos      = 0       # frames seguidos SIN carro (parpadeo)
 
         # cronometro de velocidad
         self._t_entra        = None   # tiempo (s) al cruzar ENTRA
@@ -109,15 +122,18 @@ class ZonaDeteccion:
 
     # ── logica de cruce ───────────────────────────────────────────────────
 
-    def actualizar(self, frame, bbox_pixels, t=None):
+    def actualizar(self, frame, carro_bbox, placa_bbox, t=None):
         """
-        Llama cada frame con el bbox de placa (x1,y1,x2,y2) o None.
+        Llama cada frame con el bbox del CARRO y el de la PLACA (cualquiera None).
+
+        El CARRO maneja el cruce (entra/sale/velocidad): grande y estable. La
+        PLACA solo se usa para elegir el mejor crop (OCR).
 
         t: tiempo en segundos de ESTE frame (para medir velocidad). Usar el
            tiempo del video (frame/FPS) si es archivo, o time.time() si es vivo.
            Si t=None no se calcula velocidad.
 
-        Devuelve un dict con la captura cuando el carro sale por la linea CERCANA,
+        Devuelve un dict con la captura cuando el CARRO sale por la linea CERCANA,
         o None si aun no hay captura lista. El dict trae:
             entra, mejor, sale  -> frames BGR (el mejor es el que va al OCR)
             velocidad           -> km/h o None
@@ -126,43 +142,35 @@ class ZonaDeteccion:
         """
         h, w = frame.shape[:2]
 
-        if bbox_pixels is None:
+        # el CARRO maneja el cruce, con tolerancia a parpadeos del detector.
+        # sin carro este frame: NO soltar el rastreo al toque (puede ser parpadeo);
+        # aguantar tolerancia_frames y recien ahi darlo por ido.
+        if carro_bbox is None:
             if self._estado == "rastreando":
-                self._reset()
+                self._perdidos += 1
+                if self._perdidos > self.tolerancia_frames:
+                    self._reset()
             return None
+        self._perdidos = 0
 
-        x1, y1, x2, y2 = bbox_pixels
-        ancho = x2 - x1
+        x1, y1, x2, y2 = carro_bbox
         xc = (x1 + x2) / 2
         yc = (y1 + y2) / 2
-
-        # gate de tamano: placa muy lejos (chica) o ya muy cerca (perfil)
-        if ancho < self.min_ancho_px:
-            if self._estado == "rastreando":
-                self._reset()
-            return None
-        if self.max_ancho_px and ancho > self.max_ancho_px:
-            # placa demasiado cerca/oblicua: cerrar SOLO si veniamos rastreando;
-            # si estabamos esperando, ignorar (no resetear ni borrar velocidad)
-            if self._estado == "rastreando":
-                return self._cerrar(frame, t)
-            return None
-
         dentro_e, dentro_s = self._dentro(xc, yc, w, h)
         en_zona = dentro_e and dentro_s
 
         if self._estado == "esperando":
             if en_zona:
-                self._estado    = "rastreando"
-                self._t_entra   = t            # cronometro: cruzo ENTRA
+                self._estado      = "rastreando"
+                self._t_entra     = t            # cronometro: el CARRO cruzo ENTRA
                 self._frame_entra = frame.copy()
-                self._evaluar(frame, bbox_pixels)
+                self._evaluar(frame, placa_bbox, carro_bbox)
 
         elif self._estado == "rastreando":
             if en_zona:
-                self._evaluar(frame, bbox_pixels)
+                self._evaluar(frame, placa_bbox, carro_bbox)
             elif not dentro_s:
-                # cruzo la linea CERCANA (SALE) -> cruce completo
+                # el CARRO cruzo la linea CERCANA (SALE) -> cruce completo
                 return self._cerrar(frame, t)
             else:
                 # salio por la linea LEJANA (ENTRA) -> marcha atras, descartar
@@ -170,34 +178,54 @@ class ZonaDeteccion:
 
         return None
 
-    def _evaluar(self, frame, bbox):
-        """Mide nitidez del crop de la placa; guarda el frame si mejora."""
-        x1, y1, x2, y2 = bbox
+    def _evaluar(self, frame, placa_bbox, carro_bbox):
+        """
+        Elige el mejor frame del cruce para el OCR.
+        Prioridad: un frame CON placa (suficientemente grande) le gana a cualquiera
+        sin placa; entre frames del mismo tipo, gana el mas nitido. Si la placa
+        nunca aparece, queda como respaldo el frame de CARRO mas nitido (asi igual
+        hay 'mejor' y velocidad, aunque el OCR quiza no lea).
+        """
+        placa_ok = placa_bbox is not None and (placa_bbox[2] - placa_bbox[0]) >= self.min_ancho_px
+        if placa_ok:
+            x1, y1, x2, y2 = placa_bbox
+            tiene, ancho = True, x2 - x1
+        else:
+            x1, y1, x2, y2 = carro_bbox      # respaldo: nitidez del carro
+            tiene, ancho = False, 0
         crop = frame[max(y1, 0):y2, max(x1, 0):x2]
         n = _nitidez(crop)
-        if n > self._mejor_nitidez:
-            self._mejor_nitidez = n
-            self._mejor_frame   = frame.copy()
-            self._mejor_ancho   = x2 - x1
+
+        # un frame CON placa siempre supera a uno sin placa; si empatan en tipo, el mas nitido
+        gana = (tiene and not self._mejor_tiene_placa) or \
+               (tiene == self._mejor_tiene_placa and n > self._mejor_nitidez)
+        if gana:
+            self._mejor_nitidez     = n
+            self._mejor_frame       = frame.copy()
+            self._mejor_ancho       = ancho
+            self._mejor_tiene_placa = tiene
 
     def _cerrar(self, frame, t=None):
-        """Devuelve el dict de la captura si el mejor frame supera el umbral de
-        nitidez; si no, None. Calcula la velocidad del cruce (km/h)."""
+        """Cierra el cruce del CARRO: calcula velocidad y arma la captura con el
+        mejor frame disponible (con placa si la hubo; si no, respaldo de carro).
+        Siempre devuelve captura: la velocidad se mide con el carro, exista placa
+        o no (el OCR despues lee, o no, segun el crop)."""
         self._t_sale = t
         self._frame_sale = frame.copy()
         self.ultima_velocidad = self._calcular_velocidad()
 
-        captura = None
-        if self._mejor_frame is not None and self._mejor_nitidez >= self.min_nitidez:
-            captura = {
-                "entra":        self._frame_entra,
-                "mejor":        self._mejor_frame.copy(),
-                "sale":         self._frame_sale,
-                "velocidad":    self.ultima_velocidad,
-                "nitidez":      self._mejor_nitidez,
-                "ancho_px":     self._mejor_ancho,
-                "tiempo_cruce": self._tiempo_cruce(),   # resta directa (s)
-            }
+        if self._mejor_frame is None:       # por las dudas: nunca se evaluo nada
+            self._mejor_frame = self._frame_sale
+        captura = {
+            "entra":        self._frame_entra,
+            "mejor":        self._mejor_frame.copy(),
+            "sale":         self._frame_sale,
+            "velocidad":    self.ultima_velocidad,
+            "nitidez":      self._mejor_nitidez,
+            "ancho_px":     self._mejor_ancho,
+            "tiempo_cruce": self._tiempo_cruce(),   # resta directa (s)
+            "con_placa":    self._mejor_tiene_placa,  # True = mejor con placa ; False = respaldo de carro
+        }
         self._reset()
         return captura
 
@@ -222,10 +250,12 @@ class ZonaDeteccion:
         self._mejor_frame   = None
         self._mejor_nitidez = 0.0
         self._mejor_ancho   = 0
+        self._mejor_tiene_placa = False
         self._frame_entra   = None
         self._frame_sale    = None
         self._t_entra       = None
         self._t_sale        = None
+        self._perdidos      = 0
 
     @property
     def estado(self):

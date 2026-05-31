@@ -37,7 +37,7 @@ LINEA_ENTRA   = ((0.341875, 0.10888888888888888), (0.28875, 0.5722222222222222))
 LINEA_SALE    = ((0.63875, 0.9688888888888889), (0.71625, 0.23555555555555555))
 
 # gates iniciales (se pueden mover con los sliders en modo calibracion)
-MIN_ANCHO_PX  = 20
+MIN_ANCHO_PX  = 60
 MAX_ANCHO_PX  = 0      # 0 = sin tope
 MIN_NITIDEZ   = 40
 
@@ -193,10 +193,11 @@ def _guardar_captura(captura, nombre, carpeta_captura, al_capturar):
     dt  = captura["tiempo_cruce"]
     datos = {
         "carro":           nombre,
+        "con_placa":       captura.get("con_placa", None),  # False = mejor es respaldo de carro (sin placa detectada en vivo)
         "velocidad_kmh":   round(vel, 1) if vel is not None else None,
         "tiempo_cruce_s":  round(dt, 3) if dt is not None else None,
         "nitidez":         round(captura["nitidez"], 1),
-        "ancho_placa_px":  captura["ancho_px"],
+        "ancho_placa_px":  captura["ancho_px"],  # 0 si con_placa=False
         "hora":            time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(os.path.join(carpeta, "datos.json"), "w", encoding="utf-8") as f:
@@ -281,7 +282,7 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         if detector is not None and n_frame % INFERENCIA_CADA == 0:
             carro_bbox, bbox = detector(frame)
 
-        captura = zona.actualizar(frame, bbox, t)
+        captura = zona.actualizar(frame, carro_bbox, bbox, t)
 
         if captura is not None:
             capturas_guardadas += 1

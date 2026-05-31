@@ -36,7 +36,7 @@ IN_DIR = os.path.join(APP, "camara", "capturas")
 # OCR (aleja la imagen de la distribucion con que entrenaron U-Net/CNN).
 # True  -> enderezada -> filtros -> segmentacion
 # False -> enderezada -> segmentacion (cruda, sin filtros)
-USAR_FILTROS = False
+USAR_FILTROS = True
 
 
 def fuente_de_frames():
