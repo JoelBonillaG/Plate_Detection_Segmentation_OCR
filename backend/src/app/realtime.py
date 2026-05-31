@@ -1,7 +1,7 @@
 """
 Módulo de tiempo real: WebSocket manager + buffer de frame para MJPEG.
 
-Uso desde el pipeline (core/main.py):
+Uso desde el pipeline (vision/main.py):
     from src.app.realtime import broadcast_event, set_current_frame
 
 Uso desde FastAPI (main.py):

@@ -1,0 +1,74 @@
+"""
+ETAPA 3 del pipeline: OCR (clasificador CNN de caracteres).
+
+Recibe los crops de caracter que dejo la segmentacion (U-Net) y devuelve el
+texto de la placa. Envuelve test_plate.py (script CLI) en funciones reusables:
+reusa prepare_crop (mismo preprocesado del entrenamiento) y load_classes.
+
+API publica (la usa cadena.py):
+    cargar_modelo(ruta=None, classes_path=None) -> (modelo, classes)
+    clasificar(crops, modelo, classes)          -> texto de la placa (str)
+    guardar_resultado(nombre, texto, salidas=None) -> escribe salidas/<nombre>.txt
+"""
+
+import os
+
+import cv2
+import numpy as np
+
+from .test_plate import prepare_crop, load_classes
+
+_AQUI        = os.path.dirname(os.path.abspath(__file__))
+# usar el .keras en formato HDF5 (legible por TF/Keras 2.10).
+# OJO: los .keras de "Respaldo Modelo/" estan en formato zip (Keras 3) y NO cargan aqui.
+_MODELO_DEF  = os.path.join(_AQUI, "Modelos", "best_cnn_ocr_uk.keras")
+_CLASSES_DEF = os.path.join(_AQUI, "Modelos", "classes_uk.txt")
+_SALIDAS_DEF = os.path.join(_AQUI, "salidas")
+
+
+def cargar_modelo(ruta=None, classes_path=None):
+    """Carga el clasificador CNN y sus clases. Cargar una vez y reusar."""
+    import tensorflow as tf
+    modelo = tf.keras.models.load_model(ruta or _MODELO_DEF, compile=False)
+    classes = load_classes(classes_path or _CLASSES_DEF)
+    return modelo, classes
+
+
+def clasificar(crops, modelo, classes):
+    """Lista de crops (gris) -> texto de la placa. Clasifica cada crop y concatena."""
+    if not crops:
+        return ""
+
+    th = int(modelo.input_shape[1])
+    tw = int(modelo.input_shape[2])
+    canales = int(modelo.input_shape[3]) if len(modelo.input_shape) == 4 else 1
+
+    texto = ""
+    for crop in crops:
+        if crop is None or crop.size == 0:
+            continue
+        gris = crop if crop.ndim == 2 else cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        proc = prepare_crop(gris, th, tw)            # mismo preprocesado del entrenamiento
+
+        if canales == 1:
+            proc = np.expand_dims(proc, axis=-1)
+        elif canales == 3:
+            proc = cv2.cvtColor(proc.astype(np.uint8), cv2.COLOR_GRAY2RGB).astype("float32")
+        proc = np.expand_dims(proc, axis=0)
+
+        pred = modelo.predict(proc, verbose=0)[0]
+        texto += classes[int(np.argmax(pred))]
+    return texto
+
+
+def guardar_resultado(nombre, texto, salidas=None):
+    """Escribe el texto de la placa en salidas/<nombre>.txt. Devuelve la ruta."""
+    destino = salidas or _SALIDAS_DEF
+    os.makedirs(destino, exist_ok=True)
+    ruta = os.path.join(destino, f"{nombre}.txt")
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write(texto + "\n")
+    return ruta
+
+
+__all__ = ["cargar_modelo", "clasificar", "guardar_resultado"]

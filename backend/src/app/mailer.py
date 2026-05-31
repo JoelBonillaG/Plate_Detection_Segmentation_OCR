@@ -1,3 +1,10 @@
+"""
+Envio de correos por SMTP.
+
+Lo usa la API al aprobar un evento (`PATCH /events/{id}/approve`) y los endpoints
+de notificaciones. La configuracion SMTP sale de `config.py` (variables `.env`).
+"""
+
 from dataclasses import dataclass
 from email.message import EmailMessage
 import smtplib

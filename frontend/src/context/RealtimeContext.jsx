@@ -11,7 +11,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useReducer, useRef } from "react";
 import { wsService } from "../services/ws";
-import { events as MOCK_EVENTS, systemStatus as MOCK_STATUS } from "../data/mockData";
+import { events as MOCK_EVENTS, systemStatus as MOCK_STATUS } from "../mocks/mockData";
 
 const VIDEO_URL = import.meta.env.VITE_VIDEO_URL ?? `http://${window.location.hostname}:8000/video_feed`;
 

@@ -1,3 +1,10 @@
+"""
+Conexion a PostgreSQL.
+
+Expone `get_connection()` (context manager con filas como dict) que usan
+`events_db.py` y los endpoints de la API. La URL sale de `config.py` (`.env`).
+"""
+
 from collections.abc import Iterator
 from contextlib import contextmanager
 
