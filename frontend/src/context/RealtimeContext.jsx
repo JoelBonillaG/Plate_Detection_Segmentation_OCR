@@ -6,14 +6,16 @@
  *   systemStatus    object        { system, camera, backend, fps, currentTime }
  *   latestEvent     object|null   Most recent detection from backend
  *   events          array         All events (mock + live, newest first)
- *   videoUrl        string        MJPEG endpoint URL
+ *   videoUrl        string        WebSocket de video (/ws/video) — frames JPEG a canvas
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useReducer, useRef } from "react";
 import { wsService } from "../services/ws";
 
 const API_BASE  = import.meta.env.VITE_API_URL ?? `http://${window.location.hostname}:8000`;
-const VIDEO_URL = import.meta.env.VITE_VIDEO_URL ?? `${API_BASE}/api/cameras/main/stream`;
+// Video en vivo por WebSocket binario (frames JPEG -> <canvas>). Default: /ws/video.
+const WS_BASE       = import.meta.env.VITE_WS_URL ?? `ws://${window.location.hostname}:8000/ws`;
+const VIDEO_WS_URL  = import.meta.env.VITE_VIDEO_WS_URL ?? `${WS_BASE}/video`;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -181,7 +183,7 @@ export function RealtimeProvider({ children }) {
     };
   }, []);
 
-  const value = { ...state, videoUrl: VIDEO_URL };
+  const value = { ...state, videoUrl: VIDEO_WS_URL };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

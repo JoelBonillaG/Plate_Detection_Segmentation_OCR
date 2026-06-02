@@ -1,6 +1,6 @@
 {
-  "modelo": "modelos/carros_scratch/weights/best.pt",
-  "conf_min": 0.25,
+  "modelo": "modelos/carros_scratch-2/weights/best.pt",
+  "conf_min": 0.5,
   "imgsz": 640,
   "margen": 0.08,
   "detecciones": "detecciones"

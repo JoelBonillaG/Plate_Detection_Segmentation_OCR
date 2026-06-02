@@ -74,16 +74,22 @@ class ZonaDeteccion:
                  max_ancho_px=0,
                  min_nitidez=40.0,
                  distancia_m=5.0,
-                 tolerancia_frames=3):
+                 tolerancia_frames=3,
+                 rastrear_por="carro"):
         self.linea_entra = linea_entra
         self.linea_sale  = linea_sale
         self.min_ancho_px = min_ancho_px
         self.max_ancho_px = max_ancho_px
         self.min_nitidez  = min_nitidez
         self.distancia_m  = distancia_m
-        # parpadeo: cuantos frames seguidos SIN carro aguanta sin soltar el
-        # rastreo. El carro casi no parpadea -> con 2-3 alcanza. 0 = sin tolerancia.
+        # parpadeo: cuantos frames seguidos SIN el objeto rastreado aguanta sin
+        # soltar el rastreo. El carro casi no parpadea (2-3 alcanza); la placa
+        # parpadea mas (subir a 5-8). 0 = sin tolerancia.
         self.tolerancia_frames = tolerancia_frames
+        # que objeto maneja el cruce/velocidad:
+        #   "carro" -> bbox del carro (default; estable, timing confiable)
+        #   "placa" -> bbox de la placa (cuando DETECTAR_CARROS=False; mas ruidoso)
+        self.rastrear_por = rastrear_por
 
         self._estado        = "esperando"   # esperando | rastreando
         self._mejor_frame   = None
@@ -151,10 +157,13 @@ class ZonaDeteccion:
         """
         h, w = frame.shape[:2]
 
-        # el CARRO maneja el cruce, con tolerancia a parpadeos del detector.
-        # sin carro este frame: NO soltar el rastreo al toque (puede ser parpadeo);
-        # aguantar tolerancia_frames y recien ahi darlo por ido.
-        if carro_bbox is None:
+        # objeto que maneja el cruce: carro (default) o placa (DETECTAR_CARROS=False).
+        track_bbox = carro_bbox if self.rastrear_por == "carro" else placa_bbox
+
+        # con tolerancia a parpadeos del detector. Sin el objeto este frame: NO
+        # soltar el rastreo al toque (puede ser parpadeo); aguantar
+        # tolerancia_frames y recien ahi darlo por ido.
+        if track_bbox is None:
             if self._estado == "rastreando":
                 self._perdidos += 1
                 if self._perdidos > self.tolerancia_frames:
@@ -162,7 +171,7 @@ class ZonaDeteccion:
             return None
         self._perdidos = 0
 
-        x1, y1, x2, y2 = carro_bbox
+        x1, y1, x2, y2 = track_bbox
         xc = (x1 + x2) / 2
         yc = (y1 + y2) / 2
         dentro_e, dentro_s = self._dentro(xc, yc, w, h)
@@ -199,9 +208,15 @@ class ZonaDeteccion:
         if placa_ok:
             x1, y1, x2, y2 = placa_bbox
             tiene, ancho = True, x2 - x1
-        else:
+        elif carro_bbox is not None:
             x1, y1, x2, y2 = carro_bbox      # respaldo: nitidez del carro
             tiene, ancho = False, 0
+        elif placa_bbox is not None:
+            # modo placa sin carro: la placa es chica pero igual es lo unico que hay
+            x1, y1, x2, y2 = placa_bbox
+            tiene, ancho = False, placa_bbox[2] - placa_bbox[0]
+        else:
+            return                           # nada que evaluar este frame
         crop = frame[max(y1, 0):y2, max(x1, 0):x2]
         n = _nitidez(crop)
 

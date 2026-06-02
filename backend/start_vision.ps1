@@ -1,4 +1,4 @@
-# Arranca el modulo de vision (camara + pipeline + servidor MJPEG).
+# Arranca el modulo de vision (camara + pipeline + puente WS hacia la API).
 #
 # Uso:
 #   .\start_vision.ps1              # webcam por defecto (indice 0)
@@ -6,8 +6,8 @@
 #   .\start_vision.ps1 video.mp4    # archivo de video
 #   .\start_vision.ps1 C:\ruta\video.mp4
 #
-# El video se sirve en: http://localhost:8001/stream.mjpeg
-# La API lo proxea en:  http://localhost:8000/api/cameras/main/stream
+# Vision empuja los frames a la API por WebSocket (/ws/ingest); la API los
+# reenvia al browser en /ws/video. Puede arrancar antes o despues de la API.
 
 param(
   [string]$Fuente = "0"

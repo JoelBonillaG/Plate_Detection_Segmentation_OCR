@@ -1,10 +1,11 @@
-# Arranca la API FastAPI (REST + WebSocket + proxy MJPEG).
+# Arranca la API FastAPI (REST + WebSocket de eventos y de video).
 #
 # Uso:
 #   .\start_api.ps1
 #
 # Endpoints principales:
-#   GET  /api/cameras/main/stream   video en vivo (proxy hacia vision:8001)
+#   WS   /ws/video                  video en vivo (frames JPEG -> canvas)
+#   WS   /ws/ingest                 ingesta de frames+eventos desde vision
 #   GET  /ws                        WebSocket — eventos y status
 #   GET  /api/events                historial de eventos
 #   GET  /health                    estado del sistema

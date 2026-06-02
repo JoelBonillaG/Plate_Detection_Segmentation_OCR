@@ -36,12 +36,19 @@ class Modelos:
     modelo_ocr: object          # ETAPA 3 (OCR)
     classes_ocr: object
     cfg_carros: dict
-    modelo_carros: object       # ETAPA 0 (carros); None si no esta entrenado
+    modelo_carros: object       # ETAPA 0 (carros); None si no esta entrenado o desactivado
     usar_filtros: bool
+    usar_carros: bool = True     # False -> se omite la ETAPA 0 (placa sobre frame completo)
 
 
-def cargar_modelos(usar_filtros=False):
-    """Carga los 5 modelos y sus configs una sola vez. Devuelve un Modelos."""
+def cargar_modelos(usar_filtros=False, usar_carros=True):
+    """
+    Carga los modelos y sus configs una sola vez. Devuelve un Modelos.
+
+    usar_carros=False -> NO se carga el detector de carros (ETAPA 0). La cadena
+    trabaja la placa sobre el frame completo y el rastreo en vivo lo maneja la
+    PLACA (ver camara.DETECTAR_CARROS y lineas.ZonaDeteccion rastrear_por).
+    """
     cfg         = etapa1.cargar_config()
     modelo      = etapa1.cargar_modelo(cfg)
     conf        = cfg.get("conf_min", 0.25)
@@ -49,20 +56,24 @@ def cargar_modelos(usar_filtros=False):
     modelo_seg  = etapa2.cargar_modelo()
     modelo_ocr, classes_ocr = etapa3.cargar_modelo()
 
-    # ETAPA 0: detector de carros. Si no esta entrenado -> fallback: placa
-    # sobre el frame completo (se descartan menos falsos positivos, pero corre).
+    # ETAPA 0: detector de carros. Si esta desactivado o no entrenado -> fallback:
+    # placa sobre el frame completo (mismas ramas `modelo_carros is None`).
     cfg_carros = etapa0.cargar_config()
-    try:
-        modelo_carros = etapa0.cargar_modelo(cfg_carros)
-    except FileNotFoundError:
+    if not usar_carros:
         modelo_carros = None
-        print("[ETAPA 0] modelo de carros no entrenado -> fallback: placa sobre frame completo.")
-        print("          entrena con: python deteccion_carros/redes/entrenamiento.py")
+        print("[ETAPA 0] deteccion de carros DESACTIVADA -> placa sobre frame completo.")
+    else:
+        try:
+            modelo_carros = etapa0.cargar_modelo(cfg_carros)
+        except FileNotFoundError:
+            modelo_carros = None
+            print("[ETAPA 0] modelo de carros no entrenado -> fallback: placa sobre frame completo.")
+            print("          entrena con: python deteccion_carros/redes/entrenamiento.py")
 
     return Modelos(cfg=cfg, modelo=modelo, conf=conf, cfg_filtros=cfg_filtros,
                    modelo_seg=modelo_seg, modelo_ocr=modelo_ocr, classes_ocr=classes_ocr,
                    cfg_carros=cfg_carros, modelo_carros=modelo_carros,
-                   usar_filtros=usar_filtros)
+                   usar_filtros=usar_filtros, usar_carros=usar_carros)
 
 
 def procesar_frame(nombre, frame, m):

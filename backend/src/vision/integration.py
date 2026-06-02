@@ -19,13 +19,29 @@ SRC_DIR = DIR.parent
 BACKEND_DIR = SRC_DIR.parent
 PROJECT_DIR = BACKEND_DIR.parent
 
+sys.path.insert(0, str(DIR))            # para 'import bridge'
 sys.path.insert(0, str(DIR / "pipeline"))
 sys.path.insert(0, str(BACKEND_DIR))
 
 import cadena
+import bridge
+
+
+# Eventos y status viajan por el puente WS hacia la API (procesos separados).
+def broadcast_event(payload: dict) -> None:
+    bridge.send_event(payload)
+
+
+def broadcast_status(fps: float, camera_connected: bool = True) -> None:
+    bridge.send_status({
+        "fps": round(fps, 1),
+        "camera_connected": camera_connected,
+        "backend_connected": True,
+        "current_time": datetime.datetime.now().strftime("%H:%M:%S"),
+    })
+
 
 try:
-    from src.app.realtime import broadcast_event, broadcast_status, set_current_frame
     from src.app.events_db import (
         count_reincidencias,
         insert_difuso,
@@ -44,9 +60,6 @@ except ImportError:
     LIMITE_VELOCIDAD = 20.0
     print("[REALTIME] FastAPI no disponible; modo standalone.")
 
-    def broadcast_event(data): pass
-    def broadcast_status(fps, camera_connected=True): pass
-    def set_current_frame(jpeg): pass
     def insert_evento(**kw): return None
     def insert_vision(**kw): pass
     def insert_difuso(**kw): pass

@@ -3,12 +3,17 @@ Abre la fuente de video (webcam / archivo / stream del celular) y muestra el
 feed con las dos lineas inclinadas. Cuando una placa cruza la zona, dispara la
 captura del frame mas nitido y se lo pasa al pipeline.
 
-Modo calibracion (CALIBRAR=True): se puede ajustar TODO por interfaz, sin tocar
-el codigo:
+Toda la configuracion ajustable vive en camara/config.json (no en el codigo).
+Lo que esta abajo solo LEE ese archivo y expone los valores como constantes del
+modulo (asi el resto del codigo y `from camara import DETECTAR_CARROS` siguen
+funcionando igual).
+
+Modo calibracion (calibrar=true en config.json): se puede ajustar TODO por
+interfaz, sin tocar el codigo:
     - arrastrar los extremos de las lineas con el mouse
     - sliders (arriba de la ventana) para los 3 gates
     - overlay con ancho de placa (px) y nitidez en vivo
-    - tecla 's' -> imprime la config actual para pegarla aqui y dejarla fija
+    - tecla 's' -> guarda la calibracion actual en config.json
 """
 
 import os
@@ -19,58 +24,93 @@ import cv2
 from lineas import ZonaDeteccion, nitidez
 
 
-# colores BGR
+_AQUI       = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(_AQUI, "config.json")
+
+# valores por defecto -> sirven si falta config.json o alguna clave (no rompe).
+_DEFAULTS = {
+    "camara_idx": 0,
+    "ventana_w": 1600,
+    "ventana_h": 900,
+    "stream_w": 640,
+    "stream_jpeg_q": 60,
+    "linea_entra": [[0.341875, 0.10888888888888888], [0.28875, 0.5722222222222222]],
+    "linea_sale":  [[0.63875, 0.9688888888888889], [0.71625, 0.23555555555555555]],
+    "min_ancho_px": 60,
+    "max_ancho_px": 0,
+    "min_nitidez": 40,
+    "distancia_m": 5.0,
+    "fps_fallback": 30.0,
+    "inferencia_cada": 1,
+    "detectar_carros": True,
+    "tolerancia_carro": 3,
+    "tolerancia_placa": 8,
+    "calibrar": False,
+    "mostrar_ventana": False,
+    # reconexion: SOLO para fuentes en vivo (webcam/IP/RTSP). Con video grabado
+    # se ignora (al terminar el archivo el loop sale normal).
+    #   reconectar=false (default) -> un fallo de frame termina el loop (modo video).
+    #   reconectar=true            -> si la camara en vivo falla, reintenta reabrir.
+    "reconectar": False,
+    "espera_entre_reintentos_s": 2.0,    # segundos entre reintentos de reapertura
+    "frames_antes_de_reconectar": 30,    # frames sin leer seguidos antes de reabrir
+}
+
+
+def cargar_config():
+    """Lee camara/config.json sobre los defaults. Claves faltantes usan default."""
+    cfg = dict(_DEFAULTS)
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            cfg.update(json.load(f))
+    except FileNotFoundError:
+        print(f"[CONFIG] {CONFIG_PATH} no existe -> usando valores por defecto.")
+    return cfg
+
+
+def _par_lineas(p):
+    """[[x1,y1],[x2,y2]] (JSON) -> ((x1,y1),(x2,y2)) de floats (lo que usa lineas)."""
+    (a, b), (c, d) = p
+    return ((float(a), float(b)), (float(c), float(d)))
+
+
+CFG = cargar_config()
+
+# colores BGR (constantes visuales: no son configuracion, viven en el codigo)
 COLOR_LINEA   = (0, 200, 255)   # amarillo-naranja
 COLOR_ZONA    = (0, 255, 0)     # verde (cuando esta rastreando)
-COLOR_PLACA   = (0, 255, 0)     # verde: caja de la placa (lo que se rastrea)
-COLOR_CARRO   = (255, 128, 0)   # naranja: caja del carro (solo visual)
+COLOR_PLACA   = (75, 130, 30)   # verde esmeralda (BGR): caja + etiqueta de la placa
+COLOR_CARRO   = (120, 65, 25)   # azul acero (BGR): caja + etiqueta del carro
 COLOR_TEXTO   = (255, 255, 255)
 COLOR_HANDLE  = (255, 0, 255)   # magenta: puntos arrastrables
 
-CAMARA_IDX    = 0   # 0 = camara por defecto (fallback si no se pasa fuente)
-VENTANA_W     = 1600
-VENTANA_H     = 900
-
-# stream MJPEG hacia el frontend: ancho y calidad JPEG del frame que se envia.
-# NO afecta el procesamiento (CNN/velocidad usan el frame full); solo aligera el
-# video que el browser debe decodificar. Mas chico/menor calidad = mas fluido.
-#   STREAM_W = 0 -> no redimensionar (manda al ancho de VENTANA_W).
-STREAM_W      = 640
-STREAM_JPEG_Q = 60
-
-# lineas inclinadas (fracciones del frame). Calibrar con el video real.
-#   ENTRA = lejos (arriba),  SALE = cerca (hacia la camara)
-LINEA_ENTRA   = ((0.341875, 0.10888888888888888), (0.28875, 0.5722222222222222))
-LINEA_SALE    = ((0.63875, 0.9688888888888889), (0.71625, 0.23555555555555555))
-
-# gates iniciales (se pueden mover con los sliders en modo calibracion)
-MIN_ANCHO_PX  = 60
-MAX_ANCHO_PX  = 0      # 0 = sin tope
-MIN_NITIDEZ   = 40
-
-# distancia REAL en metros entre las dos lineas (para velocidad). Calibrable.
-DISTANCIA_M   = 5.0
-FPS_FALLBACK  = 30.0   # si la fuente no reporta FPS
-
-# detectar cada N frames (1 = cada frame). Subir a 2-3 si va lento (mas fluido,
-# timing de velocidad un poco mas grueso). Reusa el ultimo bbox entre detecciones.
-INFERENCIA_CADA = 1
-
-# modo calibracion: sliders + arrastrar lineas + overlay de numeros
-CALIBRAR      = False
-
-# ventana OpenCV local (cv2.imshow). Es herramienta de DESARROLLO/calibracion.
-#   True  -> abre la ventana (necesaria para calibrar con sliders/mouse).
-#   False -> headless: solo alimenta el MJPEG. El loop nunca toca HighGUI, asi
-#            que minimizar/ocultar la ventana ya no puede frenar el stream del
-#            frontend. Salir con Ctrl+C (no hay tecla 'q' sin ventana).
-# El frontend consume el MJPEG igual en ambos casos.
-MOSTRAR_VENTANA = False
+# ── valores leidos de config.json (ver _DEFAULTS para que es cada uno) ────────
+CAMARA_IDX      = CFG["camara_idx"]
+VENTANA_W       = CFG["ventana_w"]
+VENTANA_H       = CFG["ventana_h"]
+STREAM_W        = CFG["stream_w"]
+STREAM_JPEG_Q   = CFG["stream_jpeg_q"]
+LINEA_ENTRA     = _par_lineas(CFG["linea_entra"])
+LINEA_SALE      = _par_lineas(CFG["linea_sale"])
+MIN_ANCHO_PX    = CFG["min_ancho_px"]
+MAX_ANCHO_PX    = CFG["max_ancho_px"]
+MIN_NITIDEZ     = CFG["min_nitidez"]
+DISTANCIA_M     = CFG["distancia_m"]
+FPS_FALLBACK    = CFG["fps_fallback"]
+INFERENCIA_CADA = CFG["inferencia_cada"]
+DETECTAR_CARROS = CFG["detectar_carros"]
+TOLERANCIA_CARRO = CFG["tolerancia_carro"]
+TOLERANCIA_PLACA = CFG["tolerancia_placa"]
+CALIBRAR        = CFG["calibrar"]
+MOSTRAR_VENTANA = CFG["mostrar_ventana"]
+RECONECTAR           = CFG["reconectar"]
+RECONECTAR_ESPERA    = CFG["espera_entre_reintentos_s"]
+RECONECTAR_MAX_FALLOS = CFG["frames_antes_de_reconectar"]
 
 VENTANA       = "Detector de Placas"
 
 # los frames crudos (carro centrado, con placa) se guardan aqui -> materia prima
-CAPTURA_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capturas")
+CAPTURA_DIR   = os.path.join(_AQUI, "capturas")
 
 
 # ── dibujo ────────────────────────────────────────────────────────────────
@@ -97,6 +137,27 @@ def dibujar_lineas(frame, zona: ZonaDeteccion, calibrar=False):
 
     cv2.putText(frame, f"Estado: {zona.estado}", (10, h - 15),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXTO, 2)
+
+
+def dibujar_caja_etiqueta(frame, bbox, etiqueta, color):
+    """
+    Caja del detector con etiqueta de fondo relleno y texto blanco (estilo limpio,
+    como las cajas tipicas de YOLO). La barra va arriba de la caja; si no cabe
+    (caja pegada al borde superior), se dibuja por dentro.
+    """
+    x1, y1, x2, y2 = bbox
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+    fuente, escala, grosor = cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+    (tw, th), base = cv2.getTextSize(etiqueta, fuente, escala, grosor)
+    pad = 6
+    y_barra = y1 - (th + base + pad)
+    if y_barra < 0:               # no cabe arriba -> barra por dentro de la caja
+        y_barra = y1
+    cv2.rectangle(frame, (x1, y_barra),
+                  (x1 + tw + 2 * pad, y_barra + th + base + pad), color, -1)
+    cv2.putText(frame, etiqueta, (x1 + pad, y_barra + th + pad),
+                fuente, escala, COLOR_TEXTO, grosor, cv2.LINE_AA)
 
 
 def dibujar_velocidad(frame, zona):
@@ -176,15 +237,19 @@ def _crear_trackbars(zona):
                        lambda v: setattr(zona, "distancia_m", max(v, 1) / 100.0))
 
 
-def _imprimir_config(zona):
-    print("\n--- Pega esto en camara.py para fijar la calibracion ---")
-    print(f"LINEA_ENTRA   = {zona.linea_entra}")
-    print(f"LINEA_SALE    = {zona.linea_sale}")
-    print(f"MIN_ANCHO_PX  = {zona.min_ancho_px}")
-    print(f"MAX_ANCHO_PX  = {zona.max_ancho_px}")
-    print(f"MIN_NITIDEZ   = {int(zona.min_nitidez)}")
-    print(f"DISTANCIA_M   = {zona.distancia_m:.2f}")
-    print("--------------------------------------------------------\n")
+def _guardar_config(zona):
+    """Tecla 's' en calibracion: vuelca lineas + gates + distancia a config.json
+    (conserva las demas claves). Asi la calibracion queda fija sin tocar codigo."""
+    cfg = cargar_config()
+    cfg["linea_entra"] = [list(p) for p in zona.linea_entra]
+    cfg["linea_sale"]  = [list(p) for p in zona.linea_sale]
+    cfg["min_ancho_px"] = zona.min_ancho_px
+    cfg["max_ancho_px"] = zona.max_ancho_px
+    cfg["min_nitidez"]  = int(zona.min_nitidez)
+    cfg["distancia_m"]  = round(zona.distancia_m, 2)
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    print(f"\n[CONFIG] Calibracion guardada en {CONFIG_PATH}\n")
 
 
 # ── guardar captura (carpeta por carro: entra/mejor/sale + datos.json) ──────
@@ -229,6 +294,21 @@ def _guardar_captura(captura, nombre, carpeta_captura, al_capturar):
 
 # ── loop principal ──────────────────────────────────────────────────────────
 
+def _abrir_fuente(fuente, es_archivo):
+    """
+    Abre la fuente de video y, si es un stream en vivo, aplica resolucion +
+    buffer minimo. Devuelve el VideoCapture (el llamador revisa cap.isOpened()).
+    Se reusa en la apertura inicial y en cada reintento de reconexion.
+    """
+    cap = cv2.VideoCapture(fuente)
+    if cap.isOpened() and not es_archivo:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  VENTANA_W)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VENTANA_H)
+        # buffer minimo: evita que el stream en vivo acumule lag (frames viejos)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
+
+
 def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             fuente=CAMARA_IDX, on_frame=None, on_fps=None):
     """
@@ -255,16 +335,10 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     """
     es_archivo = isinstance(fuente, str) and "://" not in fuente
 
-    cap = cv2.VideoCapture(fuente)
+    cap = _abrir_fuente(fuente, es_archivo)
     if not cap.isOpened():
         print(f"No se pudo abrir la fuente: {fuente}")
         return
-
-    if not es_archivo:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  VENTANA_W)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VENTANA_H)
-        # buffer minimo: evita que el stream del celu acumule lag (frames viejos)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     os.makedirs(carpeta_captura, exist_ok=True)
 
@@ -273,9 +347,12 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     if not fps or fps <= 0:
         fps = FPS_FALLBACK
 
+    rastrear_por = "carro" if DETECTAR_CARROS else "placa"
+    tolerancia   = TOLERANCIA_CARRO if DETECTAR_CARROS else TOLERANCIA_PLACA
     zona = ZonaDeteccion(linea_entra=LINEA_ENTRA, linea_sale=LINEA_SALE,
                          min_ancho_px=MIN_ANCHO_PX, max_ancho_px=MAX_ANCHO_PX,
-                         min_nitidez=MIN_NITIDEZ, distancia_m=DISTANCIA_M)
+                         min_nitidez=MIN_NITIDEZ, distancia_m=DISTANCIA_M,
+                         tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
     capturas_guardadas = 0
     bbox        = None    # placa (lo que se rastrea)
     carro_bbox  = None    # carro (solo visual)
@@ -299,10 +376,25 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             estado_mouse = {"arrastrando": None}
             cv2.setMouseCallback(VENTANA, _hacer_mouse(estado_mouse, zona))
 
+    fallos_lectura = 0
     while True:
         ret, frame = cap.read()
         if not ret:
-            break
+            # video grabado terminado, o reconexion desactivada -> salir normal
+            if es_archivo or not RECONECTAR:
+                break
+            # fuente EN VIVO caida: no matar el loop, reintentar reabrir.
+            fallos_lectura += 1
+            if fallos_lectura == 1:
+                print("[CAMARA] sin frames de la fuente en vivo...")
+            if fallos_lectura >= RECONECTAR_MAX_FALLOS:
+                print(f"[CAMARA] reabriendo {fuente} (espera {RECONECTAR_ESPERA}s)...")
+                cap.release()
+                time.sleep(RECONECTAR_ESPERA)
+                cap = _abrir_fuente(fuente, es_archivo)
+                fallos_lectura = 0
+            continue
+        fallos_lectura = 0
 
         frame = cv2.resize(frame, (VENTANA_W, VENTANA_H))
         n_frame += 1
@@ -323,23 +415,19 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         # --- dibujar ---
         dibujar_lineas(frame, zona, calibrar=CALIBRAR)
 
-        # caja del carro (naranja): solo si su centro cae dentro de la zona
+        # caja del carro (azul): solo si su centro cae dentro de la zona
         if carro_bbox is not None:
             cx1, cy1, cx2, cy2 = carro_bbox
             ccx, ccy = (cx1 + cx2) / 2, (cy1 + cy2) / 2
             if zona.punto_en_zona(ccx, ccy, VENTANA_W, VENTANA_H):
-                cv2.rectangle(frame, (cx1, cy1), (cx2, cy2), COLOR_CARRO, 2)
-                cv2.putText(frame, "Carro", (cx1, max(cy1 - 8, 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLOR_CARRO, 2)
+                dibujar_caja_etiqueta(frame, carro_bbox, "Carro", COLOR_CARRO)
 
-        # dibujar la placa SOLO si su centro cae dentro de la zona ENTRA-SALE
+        # caja de la placa (verde): SOLO si su centro cae dentro de la zona ENTRA-SALE
         if bbox is not None:
             x1, y1, x2, y2 = bbox
             xc, yc = (x1 + x2) / 2, (y1 + y2) / 2
             if zona.punto_en_zona(xc, yc, VENTANA_W, VENTANA_H):
-                cv2.rectangle(frame, (x1, y1), (x2, y2), COLOR_PLACA, 2)
-                cv2.putText(frame, "Placa", (x1, y1 - 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, COLOR_PLACA, 2)
+                dibujar_caja_etiqueta(frame, bbox, "Placa vehicular", COLOR_PLACA)
 
         dibujar_velocidad(frame, zona)   # velocidad: siempre visible (demo incluida)
 
@@ -373,7 +461,7 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             if tecla == ord("q"):
                 break
             if tecla == ord("s") and CALIBRAR:
-                _imprimir_config(zona)
+                _guardar_config(zona)
 
     cap.release()
     if MOSTRAR_VENTANA:

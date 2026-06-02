@@ -1,9 +1,9 @@
 """
 Punto de entrada del modulo de vision.
 
-Arranca el servidor MJPEG y el loop de camara. La API consume el video
-en /api/cameras/main/stream (proxy hacia stream_server) y recibe eventos
-por WebSocket cuando un carro completa el cruce.
+Arranca el puente WS hacia la API y el loop de camara. La API recibe los frames
+en /ws/ingest y los reenvia al browser por /ws/video; los eventos/status viajan
+por el mismo puente y salen por /ws cuando un carro completa el cruce.
 
 Ejecutar desde backend/:
     python -m src.vision.main
@@ -30,17 +30,19 @@ sys.path.insert(0, str(BACKEND_DIR))
 # False -> enderezada -> segmentacion directa
 USAR_FILTROS = True
 
-from camara import iniciar
+from camara import iniciar, DETECTAR_CARROS
 import cadena
-import stream_server
+import bridge
 from integration import hacer_al_capturar, broadcast_status
 
 
 if __name__ == "__main__":
-    # arrancar el servidor MJPEG antes del loop de camara
-    stream_server.start()
+    # arrancar el puente WS hacia la API antes del loop de camara
+    bridge.start()
 
-    modelos = cadena.cargar_modelos(usar_filtros=USAR_FILTROS)
+    # DETECTAR_CARROS (en camara.py) es la unica fuente de verdad: ajusta tanto
+    # el detector (cadena) como el rastreo del cruce (lineas).
+    modelos = cadena.cargar_modelos(usar_filtros=USAR_FILTROS, usar_carros=DETECTAR_CARROS)
     print("Modelos cargados.")
 
     def detectar_en_vivo(frame):
@@ -55,6 +57,6 @@ if __name__ == "__main__":
         detector=detectar_en_vivo,
         al_capturar=hacer_al_capturar(modelos),
         fuente=fuente,
-        on_frame=stream_server.set_frame,   # cada frame anotado -> MJPEG
+        on_frame=bridge.send_frame,         # cada frame anotado -> WS /ws/video
         on_fps=broadcast_status,            # ~1/s -> status WebSocket
     )

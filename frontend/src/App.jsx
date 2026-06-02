@@ -230,7 +230,6 @@ function Dashboard({ event, onOpen }) {
         <VideoPanel videoUrl={videoUrl} event={event} />
         <EventFeed events={events} onOpen={onOpen} />
       </div>
-      <MetricGrid />
     </div>
   );
 }
@@ -277,7 +276,9 @@ function EventFeed({ events, onOpen }) {
 
 function VideoPanel({ videoUrl, event }) {
   const containerRef = useRef(null);
+  const canvasRef = useRef(null);
   const [isFs, setIsFs] = useState(false);
+  const [live, setLive] = useState(false);   // true cuando llega el primer frame
 
   const toggleFullscreen = () => {
     const el = containerRef.current;
@@ -296,6 +297,49 @@ function VideoPanel({ videoUrl, event }) {
     return () => document.removeEventListener("fullscreenchange", handler);
   }, []);
 
+  // Video en vivo: WebSocket binario (/ws/video). Cada mensaje es un JPEG que se
+  // dibuja en el <canvas>. Reconecta solo si la API/vision aun no estan listas
+  // -> NO se necesita F5. El stream ya viene anotado por vision (lineas + cajas).
+  React.useEffect(() => {
+    let ws = null;
+    let cerrado = false;
+    let reconnect = null;
+
+    const draw = async (blob) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      try {
+        const bmp = await createImageBitmap(blob);
+        if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+          canvas.width = bmp.width;
+          canvas.height = bmp.height;
+        }
+        canvas.getContext("2d").drawImage(bmp, 0, 0);
+        bmp.close?.();
+        setLive(true);
+      } catch { /* frame corrupto: ignorar */ }
+    };
+
+    const open = () => {
+      if (cerrado) return;
+      ws = new WebSocket(videoUrl);
+      ws.binaryType = "blob";
+      ws.onmessage = ({ data }) => { if (data instanceof Blob) draw(data); };
+      ws.onclose = () => {
+        setLive(false);
+        if (!cerrado) reconnect = setTimeout(open, 2000);   // reintento auto
+      };
+      ws.onerror = () => ws?.close();
+    };
+
+    open();
+    return () => {
+      cerrado = true;
+      clearTimeout(reconnect);
+      ws?.close();
+    };
+  }, [videoUrl]);
+
   return (
     <div className="card">
       <div className="card-header">
@@ -305,12 +349,14 @@ function VideoPanel({ videoUrl, event }) {
         </div>
       </div>
       <div className="video-frame" ref={containerRef}>
-        {/* El stream MJPEG ya viene anotado por vision (lineas + cajas + velocidad). */}
-        <img
-          src={videoUrl}
-          alt="Video en vivo"
-          onError={e => { if (event?.images?.frame) e.target.src = event.images.frame; }}
-        />
+        <canvas ref={canvasRef} />
+        {!live && (
+          <div className="video-placeholder">
+            {event?.images?.frame
+              ? <img src={event.images.frame} alt="Última detección" />
+              : <span>Conectando con la cámara…</span>}
+          </div>
+        )}
         <button className="video-fullscreen-btn" onClick={toggleFullscreen} title={isFs ? "Salir de pantalla completa" : "Pantalla completa"}>
           {isFs ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
@@ -1437,7 +1483,7 @@ function SettingsView() {
       <div className="card">
         <div style={{ display: "grid", gap: 14, maxWidth: 600, padding: 18 }}>
           {[
-            { label: "Endpoint de video (MJPEG)", val: "/api/cameras/main/stream" },
+            { label: "Endpoint de video (WS)",    val: "/ws/video" },
             { label: "WebSocket",                 val: "/ws" },
             { label: "Límite de velocidad campus", val: "50 km/h" },
             { label: "Umbral confianza OCR",       val: "0.85" },

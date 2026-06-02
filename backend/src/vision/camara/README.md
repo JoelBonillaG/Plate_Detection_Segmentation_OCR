@@ -35,14 +35,22 @@ python -m src.vision.main http://IP:4747/video   # celular DroidCam / IP Webcam
 4. Dibujar lineas, cajas (carro naranja, placa verde) y velocidad.
 5. Guardar una captura por cruce y entregarla por `al_capturar`.
 
-## Parametros (en `camara.py`)
+## Parametros (en `camara/config.json`)
+
+Toda la configuracion vive en `camara/config.json` (no en el codigo). `camara.py`
+lo lee al arrancar; si falta el archivo o una clave, usa los defaults de `_DEFAULTS`.
+Las claves del JSON van en minuscula con guion bajo (`linea_entra`, `detectar_carros`,
+`mostrar_ventana`, ...); abajo se nombran en MAYUSCULA solo por costumbre.
+
+En modo calibracion, la tecla **`s`** guarda lineas + gates + distancia de vuelta
+en `config.json` (conserva las demas claves) — ya no se pega nada en el codigo.
 
 ### Lineas - donde mirar
 
-| Param | Que es |
+| Clave | Que es |
 |---|---|
-| `LINEA_ENTRA` | linea lejana: el carro entra a la zona, empieza el rastreo |
-| `LINEA_SALE` | linea cercana: el carro sale, dispara la captura |
+| `linea_entra` | linea lejana: el carro entra a la zona, empieza el rastreo |
+| `linea_sale` | linea cercana: el carro sale, dispara la captura |
 
 Cada linea = dos puntos `((x1,y1),(x2,y2))` en fracciones `0..1` del frame.
 Inclinables para seguir el carril. El cruce se prueba con el **centro del carro**
@@ -82,9 +90,11 @@ Calculo: `velocidad_km/h = DISTANCIA_M / (t_sale - t_entra) * 3.6`, medido con e
 
 ### Control
 
-| Param | Que hace |
+| Clave | Que hace |
 |---|---|
-| `CALIBRAR` | `True` = modo debug (sliders, arrastrar lineas, overlay). `False` = limpio |
+| `calibrar` | `true` = modo debug (sliders, arrastrar lineas, overlay; tecla `s` guarda). `false` = limpio |
+| `mostrar_ventana` | `true` = abre ventana OpenCV local. `false` = headless (solo alimenta el video al backend) |
+| `detectar_carros` | `true` = el CARRO maneja el cruce/velocidad (placa dentro del carro). `false` = la PLACA maneja el cruce (sin ETAPA 0) |
 | `fuente` (argv) | webcam `0` / `video.mp4` / URL del celular |
 
 ## Idea clave

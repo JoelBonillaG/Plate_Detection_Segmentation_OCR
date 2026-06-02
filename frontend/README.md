@@ -4,7 +4,7 @@ Interfaz web del sistema de monitoreo vehicular universitario.
 
 No procesa imagen ni corre inferencia. Solo consume lo que expone el backend:
 
-- `GET  /api/cameras/main/stream`  video en vivo (MJPEG, proxy hacia vision)
+- `WS   /ws/video`                 video en vivo (frames JPEG binarios -> canvas)
 - `GET  /ws`                       WebSocket — eventos y status en tiempo real
 - `GET  /api/events`               historial de eventos
 - `GET  /api/events/{id}`          detalle de un evento
@@ -16,7 +16,7 @@ No procesa imagen ni corre inferencia. Solo consume lo que expone el backend:
 
 - Node.js 18 o superior
 - Backend corriendo en `http://127.0.0.1:8000`
-- Vision corriendo en `http://127.0.0.1:8001` (el backend le hace proxy)
+- Vision corriendo (`start_vision`); empuja video/eventos a la API por WebSocket
 
 ## Instalar y ejecutar
 
@@ -41,19 +41,18 @@ Crear `.env` junto a `package.json` (ver `.env.example`):
 |---|---|---|
 | `VITE_API_URL` | `http://<host>:8000` | URL base de la API |
 | `VITE_WS_URL` | `ws://<host>:8000/ws` | WebSocket del backend |
-| `VITE_VIDEO_URL` | `http://<host>:8000/api/cameras/main/stream` | Stream MJPEG |
+| `VITE_VIDEO_WS_URL` | `ws://<host>:8000/ws/video` | WebSocket de video (frames JPEG) |
 
 Si no se definen, el frontend infiere el host de `window.location.hostname`.
 
 ## Flujo de datos
 
 ```text
-vision (puerto 8001)
-  -> MJPEG /stream.mjpeg
-  -> API proxy /api/cameras/main/stream
-  -> <img src="/api/cameras/main/stream" /> en el dashboard
+vision (proceso aparte)
+  -> WS cliente a la API /ws/ingest  (frames JPEG binarios + eventos/status JSON)
 
 API (puerto 8000)
+  -> /ws/video    reenvia frames -> <canvas> en el dashboard
   -> /ws          eventos y status en tiempo real
   -> /api/events  historial paginado
 ```

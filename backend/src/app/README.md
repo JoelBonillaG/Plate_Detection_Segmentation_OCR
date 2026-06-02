@@ -36,10 +36,11 @@ Lee variables desde `.env` en la raiz del repo (ver `backend/README.md`).
 
 ### Video en vivo
 
-- `GET /api/cameras/main/stream` — proxy MJPEG hacia vision (puerto 8001).
-  El frontend lo consume con `<img src="/api/cameras/main/stream">`.
-  La URL de vision es configurable con `VISION_STREAM_URL` en `.env`
-  (default: `http://localhost:8001/stream.mjpeg`).
+- `WS /ws/video` — frames JPEG en binario. El frontend los dibuja en un
+  `<canvas>` y reconecta solo (no necesita F5).
+- `WS /ws/ingest` — ingesta desde el proceso de vision: recibe frames (binario)
+  y eventos/status (JSON) y los reenvia a `/ws/video` y `/ws` respectivamente.
+  Es el unico puente vision -> api (procesos separados).
 
 ### Eventos
 
@@ -69,9 +70,10 @@ Lee variables desde `.env` en la raiz del repo (ver `backend/README.md`).
 
 Vision corre en su propio proceso (`python -m src.vision.main`):
 
-- Sirve video MJPEG en `http://localhost:8001/stream.mjpeg` directamente.
-- La API hace **proxy** en `/api/cameras/main/stream` con `httpx`.
-- Cuando un carro cruza, `integration.py` llama `broadcast_event` (WebSocket)
-  e `insert_evento` (DB) desde el mismo proceso de vision.
+- Abre un WebSocket **cliente** a `/ws/ingest` (ver `vision/bridge.py`) y empuja
+  cada frame anotado (binario) + eventos/status (JSON). La API los reenvia.
+- El puente reconecta solo: vision y api pueden arrancar en cualquier orden.
+- Cuando un carro cruza, `integration.py` llama `broadcast_event` (-> puente)
+  e `insert_evento` (DB, conexion directa a Postgres desde vision).
 
-Si la API no esta levantada, vision sigue en modo standalone.
+Si la API no esta levantada, vision sigue capturando y el puente reintenta.

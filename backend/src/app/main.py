@@ -4,7 +4,8 @@ API FastAPI del sistema de monitoreo vehicular.
 Rutas:
     GET  /health                   estado general
     GET  /health/db                prueba conexion a Postgres
-    GET  /api/cameras/main/stream  proxy del MJPEG de vision
+    WS   /ws/video                 video en vivo (frames JPEG binarios -> browser)
+    WS   /ws/ingest                ingesta de frames+eventos desde el proceso de vision
     GET  /ws                       WebSocket (eventos + status en vivo)
     GET  /api/events               historial de eventos
     GET  /api/events/{id}          detalle de un evento
@@ -18,13 +19,10 @@ Rutas:
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
-import httpx
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
 
@@ -36,12 +34,9 @@ from .database import (
     mark_notification_sent,
 )
 from .mailer import EmailPayload, build_vehicle_notification_body, send_email
-from .realtime import get_current_frame, manager
+from .realtime import get_current_frame, set_current_frame, manager, video_manager
 from .events_db import fetch_eventos, fetch_evento, _row_to_payload, approve_evento, reject_evento
 from .fuzzy import EXCESO, REINCI, SEVERIDAD, RULES, LIMITE_VELOCIDAD as FZ_LIMITE, UMBRAL_TEMERARIA as FZ_UMBRAL
-
-# URL del servidor MJPEG de vision (puede sobreescribirse con VISION_STREAM_URL)
-VISION_STREAM_URL = os.getenv("VISION_STREAM_URL", "http://localhost:8001/stream.mjpeg")
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -82,33 +77,63 @@ def health_db() -> dict:
         raise HTTPException(status_code=503, detail=f"No se pudo conectar a Postgres: {exc}") from exc
 
 
-# ── Video MJPEG (proxy hacia vision) ─────────────────────────────────────────
+# ── Video por WebSocket ───────────────────────────────────────────────────────
 
-@app.get("/api/cameras/main/stream")
-async def camera_stream() -> StreamingResponse:
+@app.websocket("/ws/video")
+async def video_stream(ws: WebSocket) -> None:
     """
-    Proxy del stream MJPEG de vision. El frontend consume esto con:
-        <img src="/api/cameras/main/stream">
-
-    Vision sirve el video en VISION_STREAM_URL (por defecto localhost:8001/stream.mjpeg).
+    Video en vivo. Emite frames JPEG en BINARIO. El frontend dibuja cada frame
+    en un <canvas>. Reconecta solo: si vision aun no esta lista, el socket queda
+    abierto y los frames empiezan a llegar cuando vision se conecta a /ws/ingest.
+    NO se necesita F5.
     """
-    client = httpx.AsyncClient(timeout=None)
+    await video_manager.connect(ws)
+    try:
+        # mandar el ultimo frame conocido de inmediato (arranque instantaneo)
+        ultimo = get_current_frame()
+        if ultimo:
+            await ws.send_bytes(ultimo)
+        # el browser no envia nada; solo mantenemos el socket vivo
+        while True:
+            await ws.receive_bytes()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await video_manager.disconnect(ws)
 
-    async def proxy():
-        try:
-            async with client.stream("GET", VISION_STREAM_URL) as resp:
-                async for chunk in resp.aiter_bytes(chunk_size=4096):
-                    yield chunk
-        except (httpx.ConnectError, httpx.RemoteProtocolError):
-            # vision no esta corriendo; devolver un frame vacio en vez de crash
-            yield b""
-        finally:
-            await client.aclose()
 
-    return StreamingResponse(
-        proxy(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
+@app.websocket("/ws/ingest")
+async def ingest_stream(ws: WebSocket) -> None:
+    """
+    Ingesta desde el proceso de vision (start_vision). Vision empuja:
+        - mensaje BINARIO -> frame JPEG anotado  -> reenviar a /ws/video
+        - mensaje TEXTO   -> JSON {type,data}    -> reenviar a /ws (eventos/status)
+    Es el unico puente vision -> api (procesos separados).
+    """
+    await ws.accept()
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            data = msg.get("bytes")
+            if data is not None:
+                set_current_frame(data)
+                await video_manager.broadcast_bytes(data)
+                continue
+            text = msg.get("text")
+            if text is not None:
+                try:
+                    import json
+                    await manager.broadcast(json.loads(text))
+                except Exception:
+                    pass
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
 
 
 # ── WebSocket /ws ─────────────────────────────────────────────────────────────
