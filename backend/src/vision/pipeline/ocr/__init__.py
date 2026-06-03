@@ -34,10 +34,16 @@ def cargar_modelo(ruta=None, classes_path=None):
     return modelo, classes
 
 
-def clasificar(crops, modelo, classes, return_conf=False):
+def clasificar(crops, modelo, classes, return_conf=False, num_letters=3):
     """Lista de crops (gris) -> texto de la placa. Clasifica cada crop y concatena.
+
+    Reglas posicionales (formato Ecuador: 3 letras + digitos): en las primeras
+    `num_letters` posiciones se elige la mejor LETRA aunque un digito tenga mas
+    confianza, y en el resto la mejor CIFRA. Asi se eliminan confusiones cruzadas
+    (O/0, I/1, Z/2, S/5...). Con num_letters=None se usa el argmax libre.
+
     Con return_conf=True devuelve (texto, confianzas) donde confianzas es la lista
-    del softmax maximo de cada caracter (alineada con el texto)."""
+    del softmax de la clase ELEGIDA (ya restringida) de cada caracter."""
     if not crops:
         return ("", []) if return_conf else ""
 
@@ -45,8 +51,12 @@ def clasificar(crops, modelo, classes, return_conf=False):
     tw = int(modelo.input_shape[2])
     canales = int(modelo.input_shape[3]) if len(modelo.input_shape) == 4 else 1
 
+    letter_ids = [i for i, c in enumerate(classes) if c.isalpha()]
+    digit_ids  = [i for i, c in enumerate(classes) if c.isdigit()]
+
     texto = ""
     confianzas = []
+    posicion = 0
     for crop in crops:
         if crop is None or crop.size == 0:
             continue
@@ -60,8 +70,17 @@ def clasificar(crops, modelo, classes, return_conf=False):
         proc = np.expand_dims(proc, axis=0)
 
         pred = modelo.predict(proc, verbose=0)[0]
-        texto += classes[int(np.argmax(pred))]
-        confianzas.append(float(np.max(pred)))
+
+        # restringir el argmax a la clase valida por posicion
+        if num_letters is None:
+            mejor = int(np.argmax(pred))
+        else:
+            permitidos = letter_ids if posicion < num_letters else digit_ids
+            mejor = max(permitidos, key=lambda i: pred[i])
+
+        texto += classes[mejor]
+        confianzas.append(float(pred[mejor]))
+        posicion += 1
     return (texto, confianzas) if return_conf else texto
 
 

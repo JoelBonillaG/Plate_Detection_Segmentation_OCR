@@ -34,9 +34,16 @@ def _ordenar_puntos(pts):
     ], dtype="float32")
 
 
-def _warp(img, pts, ancho, alto):
-    """Perspectiva: 4 puntos -> rectangulo ancho x alto."""
+def _warp(img, pts):
+    """Perspectiva a horizontal SIN encoger: el tamano de salida sale de las
+    longitudes REALES de los lados del cuadrilatero detectado -> conserva la
+    resolucion nativa de la placa (no se fuerza a un ancho x alto fijo)."""
     src = _ordenar_puntos(pts)
+    tl, tr, br, bl = src
+    ancho = int(round(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))))
+    alto  = int(round(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))))
+    if ancho < 1 or alto < 1:
+        return img
     dst = np.array([[0, 0], [ancho - 1, 0],
                     [ancho - 1, alto - 1], [0, alto - 1]], dtype="float32")
     M = cv2.getPerspectiveTransform(src, dst)
@@ -44,9 +51,12 @@ def _warp(img, pts, ancho, alto):
 
 
 def enderezar(crop, ancho=300, alto=100):
-    """Recibe el recorte de la placa y la devuelve horizontal (ancho x alto)."""
-    # ampliar: en imagenes 416px la placa es chica; mejora la deteccion de bordes
-    crop = cv2.resize(crop, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+    """Recibe el recorte de la placa y la devuelve HORIZONTAL conservando su
+    resolucion nativa. Solo corrige perspectiva/rotacion; NO infla con pixeles
+    sinteticos ni encoge a un tamano fijo (eso pixelaba).
+
+    ancho/alto quedan en la firma por compatibilidad con las llamadas viejas,
+    pero ya NO se usan (el tamano lo decide la placa real)."""
     area = crop.shape[0] * crop.shape[1]
 
     gris  = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
@@ -61,12 +71,12 @@ def enderezar(crop, ancho=300, alto=100):
         peri   = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
         if len(approx) == 4 and cv2.contourArea(c) > 0.20 * area:
-            return _warp(crop, approx, ancho, alto)
+            return _warp(crop, approx)
 
     # b) rectangulo rotado -> rotacion
     if contornos and cv2.contourArea(contornos[0]) > 0.20 * area:
         caja = cv2.boxPoints(cv2.minAreaRect(contornos[0]))
-        return _warp(crop, caja, ancho, alto)
+        return _warp(crop, caja)
 
-    # c) sin contorno fiable -> recorte simple
-    return cv2.resize(crop, (ancho, alto))
+    # c) sin contorno fiable -> crop tal cual (resolucion nativa, sin tocar)
+    return crop

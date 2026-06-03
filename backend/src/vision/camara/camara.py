@@ -19,6 +19,8 @@ interfaz, sin tocar el codigo:
 import os
 import json
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 from lineas import ZonaDeteccion, nitidez
@@ -300,13 +302,107 @@ def _abrir_fuente(fuente, es_archivo):
     buffer minimo. Devuelve el VideoCapture (el llamador revisa cap.isOpened()).
     Se reusa en la apertura inicial y en cada reintento de reconexion.
     """
-    cap = cv2.VideoCapture(fuente)
+    es_url = isinstance(fuente, str) and "://" in fuente
+    es_webcam = isinstance(fuente, int)
+
+    if es_url:
+        # RTSP: forzar TCP + sin buffer -> menos latencia (clave para tiempo real).
+        # H.264/H.265 de RTSP comprime el movimiento mucho mejor que el MJPEG http.
+        if str(fuente).lower().startswith("rtsp"):
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer"
+        # backend FFMPEG explicito: evita que OpenCV trate la URL como secuencia de
+        # imagenes (error CAP_IMAGES) y le da soporte real de streaming (rtsp/http).
+        cap = cv2.VideoCapture(fuente, cv2.CAP_FFMPEG)
+    else:
+        cap = cv2.VideoCapture(fuente)   # webcam (indice) o archivo de video
+
     if cap.isOpened() and not es_archivo:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  VENTANA_W)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VENTANA_H)
-        # buffer minimo: evita que el stream en vivo acumule lag (frames viejos)
+        # buffer minimo: evita que la fuente en vivo acumule lag (frames viejos)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # NO forzar resolucion en webcam: camaras virtuales (DroidCam) entregan
+        # negro si se les pide una resolucion que no soportan (p.ej. 960x720). El
+        # frame se reescala a VENTANA_W x VENTANA_H mas adelante, asi que la nativa
+        # de la camara sirve igual.
+        if not es_webcam:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH,  VENTANA_W)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VENTANA_H)
     return cap
+
+
+class FuenteVideo:
+    """
+    Envuelve cv2.VideoCapture y unifica los dos modos:
+
+    - Video grabado (es_archivo): lectura SECUENCIAL, no se pierde ningun frame
+      (importa para el timing frame/FPS y para no saltarse autos).
+    - EN VIVO (webcam/URL/RTSP): un hilo lee sin parar y guarda SOLO el ultimo
+      frame; el loop principal procesa siempre el mas reciente y descarta los
+      atrasados -> el DELAY NO se acumula. La reconexion (si esta activa) vive
+      aqui: si la camara se cae, reintenta reabrir sin frenar el loop.
+
+    leer() devuelve (vivo, frame, version):
+        vivo    -> False = se acabo el video / la fuente murio sin reconexion.
+        frame   -> ultimo frame (vivo) o el siguiente (video); None si aun no hay.
+        version -> contador que sube con cada frame nuevo (para no reprocesar).
+    """
+
+    def __init__(self, fuente, es_archivo):
+        self.fuente = fuente
+        self.es_archivo = es_archivo
+        self.cap = _abrir_fuente(fuente, es_archivo)
+        self._lock = threading.Lock()
+        self._frame = None
+        self._version = 0
+        self._vivo = self.cap.isOpened()
+        self._hilo = None
+        # solo en vivo: hilo lector "ultimo frame gana"
+        if not es_archivo and self._vivo:
+            self._hilo = threading.Thread(target=self._bucle_vivo, daemon=True)
+            self._hilo.start()
+
+    def abierta(self):
+        return self.cap is not None and self.cap.isOpened()
+
+    def get_fps(self):
+        return self.cap.get(cv2.CAP_PROP_FPS)
+
+    def _bucle_vivo(self):
+        fallos = 0
+        while self._vivo:
+            ret, frame = self.cap.read()
+            if not ret:
+                if not RECONECTAR:
+                    self._vivo = False          # caida sin reconexion -> terminar
+                    break
+                fallos += 1
+                if fallos == 1:
+                    print("[CAMARA] sin frames de la fuente en vivo...")
+                if fallos >= RECONECTAR_MAX_FALLOS:
+                    print(f"[CAMARA] reabriendo {self.fuente} (espera {RECONECTAR_ESPERA}s)...")
+                    self.cap.release()
+                    time.sleep(RECONECTAR_ESPERA)
+                    self.cap = _abrir_fuente(self.fuente, self.es_archivo)
+                    fallos = 0
+                continue
+            fallos = 0
+            with self._lock:
+                self._frame = frame
+                self._version += 1
+
+    def leer(self):
+        if self.es_archivo:
+            ret, frame = self.cap.read()
+            self._version += 1
+            return ret, frame, self._version
+        with self._lock:
+            return self._vivo, self._frame, self._version
+
+    def liberar(self):
+        self._vivo = False
+        if self._hilo is not None:
+            self._hilo.join(timeout=1.0)
+        if self.cap is not None:
+            self.cap.release()
 
 
 def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
@@ -335,15 +431,15 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     """
     es_archivo = isinstance(fuente, str) and "://" not in fuente
 
-    cap = _abrir_fuente(fuente, es_archivo)
-    if not cap.isOpened():
+    fuente_video = FuenteVideo(fuente, es_archivo)
+    if not fuente_video.abierta():
         print(f"No se pudo abrir la fuente: {fuente}")
         return
 
     os.makedirs(carpeta_captura, exist_ok=True)
 
     # FPS de la fuente (para convertir frames -> segundos en video grabado)
-    fps = cap.get(cv2.CAP_PROP_FPS)
+    fps = fuente_video.get_fps()
     if not fps or fps <= 0:
         fps = FPS_FALLBACK
 
@@ -354,6 +450,12 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
                          min_nitidez=MIN_NITIDEZ, distancia_m=DISTANCIA_M,
                          tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
     capturas_guardadas = 0
+
+    # guardar captura (3 imwrite + json + pipeline OCR) en un hilo aparte: asi NO
+    # frena el loop de video. 1 worker = se serializan las capturas en orden y el
+    # pipeline no corre concurrente. Los frames del dict ya son .copy(), no hay race.
+    guardado_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="captura")
+
     bbox        = None    # placa (lo que se rastrea)
     carro_bbox  = None    # carro (solo visual)
     n_frame     = 0
@@ -376,26 +478,29 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             estado_mouse = {"arrastrando": None}
             cv2.setMouseCallback(VENTANA, _hacer_mouse(estado_mouse, zona))
 
-    fallos_lectura = 0
+    ultima_version = -1
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            # video grabado terminado, o reconexion desactivada -> salir normal
-            if es_archivo or not RECONECTAR:
-                break
-            # fuente EN VIVO caida: no matar el loop, reintentar reabrir.
-            fallos_lectura += 1
-            if fallos_lectura == 1:
-                print("[CAMARA] sin frames de la fuente en vivo...")
-            if fallos_lectura >= RECONECTAR_MAX_FALLOS:
-                print(f"[CAMARA] reabriendo {fuente} (espera {RECONECTAR_ESPERA}s)...")
-                cap.release()
-                time.sleep(RECONECTAR_ESPERA)
-                cap = _abrir_fuente(fuente, es_archivo)
-                fallos_lectura = 0
+        vivo, frame, version = fuente_video.leer()
+        if not vivo:
+            # video terminado, o fuente en vivo caida sin reconexion -> salir
+            break
+        # en vivo: si no hay frame nuevo, no reprocesar el mismo (no quema CPU)
+        if frame is None or (not es_archivo and version == ultima_version):
+            time.sleep(0.005)
             continue
-        fallos_lectura = 0
+        ultima_version = version
 
+        # DOS frames distintos a proposito:
+        #   frame_nativo -> resolucion REAL de la fuente; es lo que se GUARDA y va
+        #                   al OCR (mas pixeles reales en la placa = mas legible).
+        #   frame        -> reescalado a VENTANA_W x VENTANA_H para deteccion,
+        #                   dibujo y stream (rapido y tamano fijo de ventana).
+        # Antes se reescalaba ANTES de capturar y la placa llegaba al OCR encogida.
+        frame_nativo = frame
+        if n_frame == 0:
+            hn, wn = frame_nativo.shape[:2]
+            print(f"[CAMARA] resolucion nativa de la fuente: {wn}x{hn} "
+                  f"(captura/OCR) ; display {VENTANA_W}x{VENTANA_H}")
         frame = cv2.resize(frame, (VENTANA_W, VENTANA_H))
         n_frame += 1
 
@@ -405,12 +510,13 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         if detector is not None and n_frame % INFERENCIA_CADA == 0:
             carro_bbox, bbox = detector(frame)
 
-        captura = zona.actualizar(frame, carro_bbox, bbox, t)
+        captura = zona.actualizar(frame, carro_bbox, bbox, t, frame_captura=frame_nativo)
 
         if captura is not None:
             capturas_guardadas += 1
             nombre = f"{time.strftime('%Y%m%d_%H%M%S')}_carro{capturas_guardadas:03d}"
-            _guardar_captura(captura, nombre, carpeta_captura, al_capturar)
+            guardado_pool.submit(_guardar_captura, captura, nombre,
+                                 carpeta_captura, al_capturar)
 
         # --- dibujar ---
         dibujar_lineas(frame, zona, calibrar=CALIBRAR)
@@ -463,7 +569,9 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             if tecla == ord("s") and CALIBRAR:
                 _guardar_config(zona)
 
-    cap.release()
+    fuente_video.liberar()
     if MOSTRAR_VENTANA:
         cv2.destroyAllWindows()
+    # esperar a que terminen las capturas en vuelo antes de cerrar
+    guardado_pool.shutdown(wait=True)
     print(f"Capturas guardadas: {capturas_guardadas}")

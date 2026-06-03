@@ -137,7 +137,7 @@ class ZonaDeteccion:
 
     # ── logica de cruce ───────────────────────────────────────────────────
 
-    def actualizar(self, frame, carro_bbox, placa_bbox, t=None):
+    def actualizar(self, frame, carro_bbox, placa_bbox, t=None, frame_captura=None):
         """
         Llama cada frame con el bbox del CARRO y el de la PLACA (cualquiera None).
 
@@ -148,6 +148,11 @@ class ZonaDeteccion:
            tiempo del video (frame/FPS) si es archivo, o time.time() si es vivo.
            Si t=None no se calcula velocidad.
 
+        frame_captura: frame que se GUARDA para el OCR (resolucion NATIVA de la
+           fuente, mas pixeles reales = placa mas legible). `frame` se usa solo
+           para la geometria del cruce y la nitidez (display, VENTANA_W x H).
+           Si es None se usa `frame` (comportamiento anterior).
+
         Devuelve un dict con la captura cuando el CARRO sale por la linea CERCANA,
         o None si aun no hay captura lista. El dict trae:
             entra, mejor, sale  -> frames BGR (el mejor es el que va al OCR)
@@ -155,6 +160,8 @@ class ZonaDeteccion:
             nitidez, ancho_px   -> del mejor frame
             tiempo_cruce        -> segundos entre ENTRA y SALE (o None)
         """
+        if frame_captura is None:
+            frame_captura = frame
         h, w = frame.shape[:2]
 
         # objeto que maneja el cruce: carro (default) o placa (DETECTAR_CARROS=False).
@@ -181,29 +188,34 @@ class ZonaDeteccion:
             if en_zona:
                 self._estado      = "rastreando"
                 self._t_entra     = t            # cronometro: el CARRO cruzo ENTRA
-                self._frame_entra = frame.copy()
-                self._evaluar(frame, placa_bbox, carro_bbox)
+                self._frame_entra = frame_captura.copy()
+                self._evaluar(frame, placa_bbox, carro_bbox, frame_captura)
 
         elif self._estado == "rastreando":
             if en_zona:
-                self._evaluar(frame, placa_bbox, carro_bbox)
+                self._evaluar(frame, placa_bbox, carro_bbox, frame_captura)
             elif not dentro_s:
                 # el CARRO cruzo la linea CERCANA (SALE) -> cruce completo
-                return self._cerrar(frame, t)
+                return self._cerrar(frame_captura, t)
             else:
                 # salio por la linea LEJANA (ENTRA) -> marcha atras, descartar
                 self._reset()
 
         return None
 
-    def _evaluar(self, frame, placa_bbox, carro_bbox):
+    def _evaluar(self, frame, placa_bbox, carro_bbox, frame_captura=None):
         """
         Elige el mejor frame del cruce para el OCR.
         Prioridad: un frame CON placa (suficientemente grande) le gana a cualquiera
         sin placa; entre frames del mismo tipo, gana el mas nitido. Si la placa
         nunca aparece, queda como respaldo el frame de CARRO mas nitido (asi igual
         hay 'mejor' y velocidad, aunque el OCR quiza no lea).
+
+        La nitidez y los bbox se miden sobre `frame` (display); lo que se GUARDA
+        como mejor es `frame_captura` (resolucion nativa para el OCR).
         """
+        if frame_captura is None:
+            frame_captura = frame
         placa_ok = placa_bbox is not None and (placa_bbox[2] - placa_bbox[0]) >= self.min_ancho_px
         if placa_ok:
             x1, y1, x2, y2 = placa_bbox
@@ -220,12 +232,24 @@ class ZonaDeteccion:
         crop = frame[max(y1, 0):y2, max(x1, 0):x2]
         n = _nitidez(crop)
 
-        # un frame CON placa siempre supera a uno sin placa; si empatan en tipo, el mas nitido
-        gana = (tiene and not self._mejor_tiene_placa) or \
-               (tiene == self._mejor_tiene_placa and n > self._mejor_nitidez)
+        # criterio:
+        #   - un frame CON placa SIEMPRE supera al respaldo sin placa.
+        #   - entre dos CON placa: gana el MAS CERCANO (placa mas ancha = carro mas
+        #     cerca de la camara = mas pixeles reales para el OCR). Empate de ancho
+        #     -> el mas nitido. Asi NO se queda con una toma lejana aunque sea nitida.
+        #   - entre dos SIN placa (respaldo de carro): gana el mas nitido.
+        if tiene and not self._mejor_tiene_placa:
+            gana = True                       # primer frame con placa pisa al respaldo
+        elif tiene and self._mejor_tiene_placa:
+            gana = (ancho > self._mejor_ancho) or \
+                   (ancho == self._mejor_ancho and n > self._mejor_nitidez)
+        elif not tiene and not self._mejor_tiene_placa:
+            gana = n > self._mejor_nitidez    # respaldo: mas nitido
+        else:
+            gana = False                      # ya hay con placa: no degradar a respaldo
         if gana:
             self._mejor_nitidez     = n
-            self._mejor_frame       = frame.copy()
+            self._mejor_frame       = frame_captura.copy()
             self._mejor_ancho       = ancho
             self._mejor_tiene_placa = tiene
 
