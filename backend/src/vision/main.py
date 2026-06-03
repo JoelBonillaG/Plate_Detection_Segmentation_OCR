@@ -27,8 +27,8 @@ sys.path.insert(0, str(DIR / "pipeline"))
 sys.path.insert(0, str(BACKEND_DIR))
 
 # True  -> enderezada -> filtros -> segmentacion
-# False -> enderezada -> segmentacion directa
-USAR_FILTROS = True
+# False -> enderezada -> segmentacion directa (sin bilateral/unsharp: conserva detalle)
+USAR_FILTROS = False
 
 from camara import iniciar, DETECTAR_CARROS
 import cadena

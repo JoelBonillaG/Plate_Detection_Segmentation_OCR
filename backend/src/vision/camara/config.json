@@ -1,6 +1,6 @@
 {
   "camara_idx": 2,
-  "ventana_w": 960,
+  "ventana_w": 1280,
   "ventana_h": 720,
   "stream_w": 640,
   "stream_jpeg_q": 60,

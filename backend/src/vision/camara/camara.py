@@ -397,6 +397,20 @@ class FuenteVideo:
         with self._lock:
             return self._vivo, self._frame, self._version
 
+    def indice_fuente(self):
+        """Solo video: indice del proximo frame que leer() va a entregar.
+        Sirve para el pacing en tiempo real (saber cuanto vamos adelantados/atrasados)."""
+        return self._version
+
+    def saltar(self):
+        """Solo video: descarta UN frame sin decodificarlo (cap.grab() es barato).
+        Lo usa el pacing para ponerse al dia saltando los frames ya 'vencidos' en vez
+        de procesarlos -> el video se reproduce a su FPS real, no a la del pipeline."""
+        ret = self.cap.grab()
+        if ret:
+            self._version += 1
+        return ret
+
     def liberar(self):
         self._vivo = False
         if self._hilo is not None:
@@ -464,6 +478,12 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     fps_t0      = time.time()
     fps_frames  = 0
 
+    # pacing de VIDEO grabado: reloj de pared para reproducir a su FPS real. Si el
+    # pipeline no alcanza, se SALTAN frames (grab) en vez de procesarlos -> el video
+    # va a velocidad normal, no en camara lenta. (En vivo no aplica: ahi ya se
+    # descarta lo atrasado con "ultimo frame gana".)
+    t_video_inicio = None
+
     salir = "Q=salir." if MOSTRAR_VENTANA else "Ctrl+C=salir (headless, solo MJPEG)."
     print("Fuente abierta.", salir, "Calibracion ON (s=guardar config)." if (CALIBRAR and MOSTRAR_VENTANA) else "")
     print(f"Capturas -> {carpeta_captura}")
@@ -480,6 +500,24 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
 
     ultima_version = -1
     while True:
+        # ── pacing tiempo real (solo video grabado) ──────────────────────────
+        # objetivo = indice de frame que el reloj de pared dice que deberia mostrarse
+        # ahora. Si vamos ADELANTADOS, esperar; si vamos ATRASADOS, saltar (grab) los
+        # frames vencidos sin decodificarlos. Asi el video corre a su FPS real.
+        if es_archivo:
+            if t_video_inicio is None:
+                t_video_inicio = time.time()
+            objetivo = int((time.time() - t_video_inicio) * fps)
+            proximo  = fuente_video.indice_fuente()
+            if proximo > objetivo:
+                espera = proximo / fps - (time.time() - t_video_inicio)
+                if espera > 0:
+                    time.sleep(espera)
+            else:
+                while fuente_video.indice_fuente() < objetivo:
+                    if not fuente_video.saltar():
+                        break
+
         vivo, frame, version = fuente_video.leer()
         if not vivo:
             # video terminado, o fuente en vivo caida sin reconexion -> salir
@@ -504,8 +542,10 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         frame = cv2.resize(frame, (VENTANA_W, VENTANA_H))
         n_frame += 1
 
-        # tiempo de este frame: video -> frame/FPS ; vivo -> reloj real
-        t = (n_frame / fps) if es_archivo else time.time()
+        # tiempo de este frame: video -> indice REAL de fuente / FPS (NO n_frame,
+        # que con los saltos del pacing ya no corresponde al tiempo del video) ;
+        # vivo -> reloj real. Asi la velocidad sale correcta aunque se salten frames.
+        t = (version / fps) if es_archivo else time.time()
 
         if detector is not None and n_frame % INFERENCIA_CADA == 0:
             carro_bbox, bbox = detector(frame)

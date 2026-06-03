@@ -5,6 +5,7 @@ Expone `get_connection()` (context manager con filas como dict) que usan
 `events_db.py` y los endpoints de la API. La URL sale de `config.py` (`.env`).
 """
 
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -13,11 +14,31 @@ from psycopg.rows import dict_row
 
 from .config import get_settings
 
+# reintentos de CONEXION (no de la query): absorben un parpadeo del contenedor
+# Postgres (p.ej. justo despues de `docker compose up` o un restart) sin perder
+# el evento. Solo reintenta el connect; el cuerpo de la transaccion no se repite.
+_REINTENTOS_CONEXION = 3
+_ESPERA_BASE_S = 0.5
+
+
+def _conectar_con_reintentos(url: str) -> psycopg.Connection:
+    ultimo_error: Exception | None = None
+    for intento in range(_REINTENTOS_CONEXION):
+        try:
+            return psycopg.connect(url, row_factory=dict_row)
+        except psycopg.OperationalError as exc:
+            ultimo_error = exc
+            if intento < _REINTENTOS_CONEXION - 1:
+                time.sleep(_ESPERA_BASE_S * (intento + 1))   # 0.5s, 1.0s
+    raise ultimo_error  # type: ignore[misc]
+
 
 @contextmanager
 def get_connection() -> Iterator[psycopg.Connection]:
     settings = get_settings()
-    with psycopg.connect(settings.database_url, row_factory=dict_row) as connection:
+    connection = _conectar_con_reintentos(settings.database_url)
+    # `with connection:` mantiene el commit/rollback + cierre de psycopg al salir.
+    with connection:
         yield connection
 
 

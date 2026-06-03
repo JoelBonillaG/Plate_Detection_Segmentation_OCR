@@ -41,6 +41,11 @@ class Settings:
         self.postgres_password = os.getenv("POSTGRES_PASSWORD", "")
         self.postgres_host = os.getenv("POSTGRES_HOST", "localhost")
         self.postgres_host_port = _get_int("POSTGRES_HOST_PORT", 5433)
+        # Postgres local en Docker NO usa SSL: `disable` evita el handshake SSL
+        # (mas rapido y sin el error "SSL negotiation packet"). Para una DB remota
+        # con TLS, poner POSTGRES_SSLMODE=require en el .env.
+        self.postgres_sslmode = os.getenv("POSTGRES_SSLMODE", "disable")
+        self.postgres_connect_timeout = _get_int("POSTGRES_CONNECT_TIMEOUT", 5)
 
         self.smtp_host = os.getenv("SMTP_HOST", "")
         self.smtp_port = _get_int("SMTP_PORT", 587)
@@ -56,7 +61,11 @@ class Settings:
         host = self.postgres_host
         port = self.postgres_host_port
         db = quote_plus(self.postgres_db)
-        return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+        return (
+            f"postgresql://{user}:{password}@{host}:{port}/{db}"
+            f"?sslmode={self.postgres_sslmode}"
+            f"&connect_timeout={self.postgres_connect_timeout}"
+        )
 
 
 @lru_cache
