@@ -46,22 +46,28 @@ def _eval(x: float, defn: tuple) -> float:
 
 # ── Conjuntos difusos ──────────────────────────────────────────────────────────
 
-# Exceso de velocidad — universo [0, 40] km/h
+# Exceso de velocidad — universo [0, 30] km/h
+# Zona escolar/universitaria: limite 20, conduccion temeraria (expulsion) a 50 km/h
+# -> el exceso UTIL es [0, 30]. Las funciones escalan a ese rango: a 20 km/h de
+# limite, pasarse 14 km/h (ir a 34) YA es grave, no "moderado".
 EXCESO: dict[str, tuple] = {
-    "no_excess": ("trap", (0,  0,  0,  1 )),
-    "minor":     ("tri",  (0,  4,  8   )),
-    "moderate":  ("tri",  (5,  12, 20  )),
-    "serious":   ("tri",  (16, 24, 32  )),
-    "critical":  ("trap", (28, 35, 40, 40)),
+    # Conjuntos que se cruzan al ~0.5 (cobertura uniforme) -> salida del FIS monotona,
+    # sin huecos que hundan el centroide. Picos ~3,8,14,20,26 sobre [0,30].
+    "no_excess": ("trap", (0,  0,  2,  5 )),    # ~limite (20-25)
+    "minor":     ("tri",  (2,  8,  14  )),      # leve (~28)
+    "moderate":  ("tri",  (8,  14, 20  )),      # moderado (~34)
+    "serious":   ("tri",  (14, 20, 26  )),      # grave (~40)
+    "critical":  ("trap", (20, 26, 30, 30)),    # critico (~46-49, casi expulsion)
 }
 
 # Reincidencia — universo [0, 10] infracciones previas
+# Conjuntos cruzados al ~0.5 (sin huecos) -> salida monotona tambien en reincidencia.
 REINCI: dict[str, tuple] = {
-    "clean":    ("trap", (0,  0,  0,  1  )),
-    "low":      ("tri",  (0,  1.5, 3   )),
-    "moderate": ("tri",  (2,  4,  6    )),
-    "high":     ("tri",  (5,  6.5, 8   )),
-    "chronic":  ("trap", (7,  8.5, 10, 10)),
+    "clean":    ("trap", (0,   0,   1,   2.5)),
+    "low":      ("tri",  (0,   2.5, 5    )),
+    "moderate": ("tri",  (2.5, 5,   7.5  )),
+    "high":     ("tri",  (5,   7.5, 10   )),
+    "chronic":  ("trap", (7.5, 9,   10,  10 )),
 }
 
 # Severidad de la sanción — universo [0, 100]
@@ -77,32 +83,33 @@ SEVERIDAD: dict[str, tuple] = {
 # ── Base de reglas (5 exceso × 5 reincidencia = 25 reglas) ────────────────────
 # Formato: (exceso_set, reincidencia_set, severidad_set)
 RULES: list[tuple[str, str, str]] = [
-    # R1–R5: No Excess
+    # R1–R5: Sin exceso (~20-23 km/h)
     ("no_excess", "clean",    "no_action"),
     ("no_excess", "low",      "no_action"),
     ("no_excess", "moderate", "no_action"),
-    ("no_excess", "high",     "no_action"),
-    ("no_excess", "chronic",  "no_action"),
-    # R6–R10: Minor Excess
+    ("no_excess", "high",     "warning"),
+    ("no_excess", "chronic",  "warning"),
+    # R6–R10: Leve (~25 km/h) -> advertencia con record limpio
     ("minor",     "clean",    "warning"),
     ("minor",     "low",      "warning"),
-    ("minor",     "moderate", "warning"),
+    ("minor",     "moderate", "low_susp"),
     ("minor",     "high",     "low_susp"),
-    ("minor",     "chronic",  "low_susp"),
-    # R11–R15: Moderate Excess
-    ("moderate",  "clean",    "warning"),
+    ("minor",     "chronic",  "medium_susp"),
+    # R11–R15: Moderado (~31 km/h) -> YA hay suspension aunque sea limpio
+    ("moderate",  "clean",    "low_susp"),
     ("moderate",  "low",      "low_susp"),
     ("moderate",  "moderate", "medium_susp"),
     ("moderate",  "high",     "medium_susp"),
     ("moderate",  "chronic",  "high_susp"),
-    # R16–R20: Serious Excess
-    ("serious",   "clean",    "low_susp"),
+    # R16–R20: Grave (~38 km/h) -> 2+ dias
+    ("serious",   "clean",    "medium_susp"),
     ("serious",   "low",      "medium_susp"),
     ("serious",   "moderate", "high_susp"),
     ("serious",   "high",     "high_susp"),
     ("serious",   "chronic",  "critical_susp"),
-    # R21–R25: Critical Excess
-    ("critical",  "clean",    "medium_susp"),
+    # R21–R25: Critico (~42-49 km/h, justo bajo expulsion) -> severidad ALTA ya con
+    # record limpio, y CRITICA si reincide. El historial SIGUE diferenciando en el tope.
+    ("critical",  "clean",    "high_susp"),
     ("critical",  "low",      "high_susp"),
     ("critical",  "moderate", "critical_susp"),
     ("critical",  "high",     "critical_susp"),
@@ -168,7 +175,7 @@ def evaluar(velocidad: float, reincidencia: int) -> FuzzyResult:
     """Evalúa el FIS Mamdani completo para un evento vehicular."""
     r = max(0, min(10, int(reincidencia)))
     exceso_raw = velocidad - LIMITE_VELOCIDAD
-    exceso_clamped = max(0.0, min(40.0, exceso_raw))
+    exceso_clamped = max(0.0, min(30.0, exceso_raw))
 
     mem_e = {k: round(_eval(exceso_clamped, v), 4) for k, v in EXCESO.items()}
     mem_r = {k: round(_eval(float(r), v),        4) for k, v in REINCI.items()}

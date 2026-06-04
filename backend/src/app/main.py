@@ -287,7 +287,7 @@ def difuso_definiciones() -> dict:
         "variables_entrada": {
             "exceso_velocidad": {
                 "nombre": "Exceso de velocidad",
-                "universo": [0, 40],
+                "universo": [0, 30],
                 "unidad": "km/h",
                 "conjuntos": _conjuntos(EXCESO),
             },

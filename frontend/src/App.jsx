@@ -19,6 +19,29 @@ const NAV = [
 const TYPE_LABEL = { normal: "Normal", advertencia: "Advertencia", infraccion: "Infracción", grave: "Grave" };
 const REV_LABEL  = { automatica: "Automática", pendiente: "Pendiente", aprobado: "Aprobado", rechazado: "Rechazado" };
 
+// Severidad crisp (0-100) -> horas de suspensión. LINEAL: horas DIRECTAMENTE
+// PROPORCIONALES a la severidad del FIS (sin curvas a mano). Debe coincidir con
+// _crisp_to_horas en backend/src/app/mailer.py.
+//   severidad <= 30 -> 0 (región de advertencia) · 30..100 -> 0..168 h (7 días, techo).
+function crispToHours(crisp) {
+  if (crisp === null || crisp === undefined) return 0;
+  const c = Math.max(0, Math.min(100, crisp));
+  return Math.max(0, (c - 30) / 70) * 168;
+}
+function fmtDuracion(hours) {
+  const h = Math.round(hours);
+  if (h <= 0) return null;                 // sin suspensión (advertencia)
+  const d = Math.floor(h / 24), r = h % 24;
+  if (d === 0) return `${r} h`;
+  if (r === 0) return `${d} d`;
+  return `${d} d ${r} h`;
+}
+// Texto de sanción para un evento (fuzzySystem): expulsión / duración / sin sanción.
+function sancionTexto(fz) {
+  if (fz?.esTemeraria) return "Expulsión definitiva";
+  return fmtDuracion(crispToHours(fz?.crispOutput)) ?? "Sin sanción";
+}
+
 export default function App() {
   const [view, setView]           = useState("dashboard");
   const [eventId, setEventId]     = useState(null);
@@ -866,7 +889,7 @@ function ResumenTab({ event }) {
                 { label: "Tipo de evento",    val: <span className={`badge ${event.type}`}><span className="badge-dot"/>{TYPE_LABEL[event.type]}</span> },
                 { label: "Estado revisión",   val: <span className={`status-badge ${event.reviewStatus}`}>{REV_LABEL[event.reviewStatus]}</span> },
                 { label: "Nivel de riesgo",   val: <strong style={{ color: ["alto","critico"].includes(event.riskLevel) ? "var(--uta-red)" : "var(--green)" }}>{event.riskLevel?.toUpperCase()}</strong> },
-                { label: "Sanción sugerida",  val: event.suggestedPenaltyDays > 0 ? `${event.suggestedPenaltyDays} días` : "Sin sanción" },
+                { label: "Sanción sugerida",  val: sancionTexto(event.fuzzySystem) },
                 { label: "Reincidencias",     val: `${event.recurrenceCount} previas` },
                 { label: "Confianza OCR",     val: `${Math.round(event.ocrConfidence * 100)}%` },
               ].map(({ label, val }) => (
@@ -970,23 +993,23 @@ const _FALLBACK_DEFS = {
   limite_velocidad: 20, umbral_temeraria: 50,
   variables_entrada: {
     exceso_velocidad: {
-      universo: [0, 40], unidad: "km/h",
+      universo: [0, 30], unidad: "km/h",
       conjuntos: [
-        { clave: "no_excess", etiqueta: "Sin exceso", tipo: "trap", parametros: [0, 0, 0, 1] },
-        { clave: "minor",     etiqueta: "Leve",       tipo: "tri",  parametros: [0, 4, 8] },
-        { clave: "moderate",  etiqueta: "Moderado",   tipo: "tri",  parametros: [5, 12, 20] },
-        { clave: "serious",   etiqueta: "Grave",      tipo: "tri",  parametros: [16, 24, 32] },
-        { clave: "critical",  etiqueta: "Crítico",    tipo: "trap", parametros: [28, 35, 40, 40] },
+        { clave: "no_excess", etiqueta: "Sin exceso", tipo: "trap", parametros: [0, 0, 2, 5] },
+        { clave: "minor",     etiqueta: "Leve",       tipo: "tri",  parametros: [2, 8, 14] },
+        { clave: "moderate",  etiqueta: "Moderado",   tipo: "tri",  parametros: [8, 14, 20] },
+        { clave: "serious",   etiqueta: "Grave",      tipo: "tri",  parametros: [14, 20, 26] },
+        { clave: "critical",  etiqueta: "Crítico",    tipo: "trap", parametros: [20, 26, 30, 30] },
       ],
     },
     reincidencia: {
       universo: [0, 10], unidad: "infracciones",
       conjuntos: [
-        { clave: "clean",    etiqueta: "Limpio",   tipo: "trap", parametros: [0, 0, 0, 1] },
-        { clave: "low",      etiqueta: "Bajo",     tipo: "tri",  parametros: [0, 1.5, 3] },
-        { clave: "moderate", etiqueta: "Moderado", tipo: "tri",  parametros: [2, 4, 6] },
-        { clave: "high",     etiqueta: "Alto",     tipo: "tri",  parametros: [5, 6.5, 8] },
-        { clave: "chronic",  etiqueta: "Crónico",  tipo: "trap", parametros: [7, 8.5, 10, 10] },
+        { clave: "clean",    etiqueta: "Limpio",   tipo: "trap", parametros: [0, 0, 1, 2.5] },
+        { clave: "low",      etiqueta: "Bajo",     tipo: "tri",  parametros: [0, 2.5, 5] },
+        { clave: "moderate", etiqueta: "Moderado", tipo: "tri",  parametros: [2.5, 5, 7.5] },
+        { clave: "high",     etiqueta: "Alto",     tipo: "tri",  parametros: [5, 7.5, 10] },
+        { clave: "chronic",  etiqueta: "Crónico",  tipo: "trap", parametros: [7.5, 9, 10, 10] },
       ],
     },
   },
@@ -1155,6 +1178,7 @@ function FuzzyTab({ event }) {
 
   // Chart sets from backend definitions (or empty while loading)
   const excesoSets   = defs ? defs.variables_entrada.exceso_velocidad.conjuntos.map(toChartSet) : [];
+  const excesoUniv   = defs?.variables_entrada.exceso_velocidad.universo ?? [0, 30];
   const reinciSets   = defs ? defs.variables_entrada.reincidencia.conjuntos.map(toChartSet) : [];
   const severidadSets = defs ? defs.salida.conjuntos.map(toChartSet) : [];
   const limitVel     = defs?.limite_velocidad ?? 20;
@@ -1167,6 +1191,8 @@ function FuzzyTab({ event }) {
   const crispPct = fz.crispOutput !== null && fz.crispOutput !== undefined
     ? Math.max(0, Math.min(100, fz.crispOutput))
     : null;
+  // Suspensión continua (días+horas) derivada del crisp del difuso. null = advertencia.
+  const suspTxt = fmtDuracion(crispToHours(fz.crispOutput));
 
   const riskColors = { bajo: "#16a34a", medio: "#d97706", alto: "#ea580c", critico: "#c12028" };
   const riskColor = riskColors[event.riskLevel] ?? "#64748b";
@@ -1207,7 +1233,7 @@ function FuzzyTab({ event }) {
                   <span className="fsk-label">Límite campus</span>
                 </div>
                 <div className="fuzzy-state-kpi">
-                  <span className="fsk-value" style={{ color: "#16a34a" }}>0 días</span>
+                  <span className="fsk-value" style={{ color: "#16a34a" }}>Sin suspensión</span>
                   <span className="fsk-label">Sanción</span>
                 </div>
               </div>
@@ -1260,10 +1286,10 @@ function FuzzyTab({ event }) {
                   <div className="fuzzy-var-icon speed"><Gauge size={16} /></div>
                   <div>
                     <div className="fuzzy-var-name">Exceso de velocidad</div>
-                    <div style={{ fontSize: ".7rem", color: "var(--muted)" }}>Universo [0, 40] km/h</div>
+                    <div style={{ fontSize: ".7rem", color: "var(--muted)" }}>Universo [{excesoUniv[0]}, {excesoUniv[1]}] km/h</div>
                   </div>
                 </div>
-                <MembershipChart domain={[0, 40]} sets={excesoSets} currentVal={fz.speedExcess} />
+                <MembershipChart domain={excesoUniv} sets={excesoSets} currentVal={fz.speedExcess} />
                 <MembershipLegend sets={excesoSets} memberships={fz.pertenenciaExceso} />
                 <div className="fuzzy-var-body">
                   <div>
@@ -1395,13 +1421,13 @@ function FuzzyTab({ event }) {
                 </div>
               </div>
 
-              {/* Days / penalty card */}
-              {fz.suggestedPenaltyDays > 0 ? (
+              {/* Suspensión sugerida (continua: días+horas del crisp difuso) */}
+              {suspTxt ? (
                 <div className="penalty-card">
                   <ClipboardList size={28} color="var(--uta-red)" />
                   <div>
-                    <div className="penalty-days">{fz.suggestedPenaltyDays}</div>
-                    <div className="penalty-unit">días de suspensión sugeridos</div>
+                    <div className="penalty-days" style={{ fontSize: "1.7rem" }}>{suspTxt}</div>
+                    <div className="penalty-unit">de suspensión sugerida</div>
                   </div>
                 </div>
               ) : (
@@ -1411,7 +1437,7 @@ function FuzzyTab({ event }) {
                     <div className="penalty-days" style={{ color: "#16a34a", fontSize: "1rem" }}>
                       Advertencia
                     </div>
-                    <div className="penalty-unit">sin días de suspensión</div>
+                    <div className="penalty-unit">sin suspensión</div>
                   </div>
                 </div>
               )}

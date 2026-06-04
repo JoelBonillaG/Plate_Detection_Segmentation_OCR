@@ -152,7 +152,7 @@ def build_detection_body(data: dict) -> str:
         "",
         "── SISTEMA DIFUSO (MAMDANI) ────────────────────────────────────",
         f"  Nivel de riesgo      : {nivel}",
-        f"  Sanción sugerida     : {dias} día(s) de suspensión",
+        f"  Sanción sugerida     : {sancion_texto(fuzzy)}",
         f"  Conducción temeraria : {'Sí' if fuzzy.get('es_temeraria') else 'No'}",
     ]
 
@@ -214,6 +214,33 @@ def _dig(data: dict, ruta: tuple):
 
 def _conf_color(c: float) -> str:
     return "#27ae60" if c >= 0.85 else "#e67e22" if c >= 0.6 else "#c0392b"
+
+
+def _crisp_to_horas(crisp) -> float:
+    """Severidad crisp (0-100) -> horas de suspension. LINEAL y transparente: las horas
+    son DIRECTAMENTE PROPORCIONALES a la severidad que da el FIS (sin curvas a mano).
+    Debe coincidir con crispToHours en frontend/src/App.jsx.
+      severidad <= 30  -> 0 (region de advertencia del FIS)
+      severidad 30..100 -> 0..168 h (7 dias = techo, antes de expulsion)."""
+    if crisp is None:
+        return 0.0
+    c = max(0.0, min(100.0, float(crisp)))
+    return max(0.0, (c - 30) / 70) * 168.0
+
+
+def sancion_texto(fuzzy: dict) -> str:
+    """Texto de sancion: expulsion / 'X d Y h' / 'Sin suspension'."""
+    if fuzzy.get("es_temeraria"):
+        return "Expulsion definitiva (conducta temeraria)"
+    h = round(_crisp_to_horas(fuzzy.get("salida_crisp")))
+    if h <= 0:
+        return "Sin suspension (advertencia)"
+    d, r = divmod(h, 24)
+    if d == 0:
+        return f"{r} h"
+    if r == 0:
+        return f"{d} d"
+    return f"{d} d {r} h"
 
 
 def build_detection_html(data: dict):
@@ -316,7 +343,7 @@ def build_detection_html(data: dict):
           <td><b>{velocidad:.1f}</b> / {limite:.0f} km/h &nbsp; {exceso_txt}</td></tr>
       <tr><td style="color:#666;">Nivel de riesgo</td>
           <td><b style="color:{color};">{str(nivel).upper()}</b></td></tr>
-      <tr><td style="color:#666;">Sanción sugerida</td><td><b>{dias}</b> día(s)</td></tr>
+      <tr><td style="color:#666;">Sanción sugerida</td><td><b>{sancion_texto(fuzzy)}</b></td></tr>
       {f'<tr><td style="color:#666;">Salida crisp</td><td>{float(crisp):.4f}</td></tr>' if crisp is not None else ''}
     </table>
     <div style="margin-top:8px;font-size:12px;color:#666;">Pertenencia velocidad:</div>
