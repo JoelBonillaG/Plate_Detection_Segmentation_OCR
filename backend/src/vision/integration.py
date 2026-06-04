@@ -258,7 +258,7 @@ def hacer_al_capturar(modelos):
                 )
                 insert_difuso(
                     evento_id=db_id,
-                    exceso_velocidad=exceso,
+                    exceso_velocidad=fz.exceso,
                     pertenencia_velocidad=payload["fuzzy"]["pertenencia_velocidad"],
                     pertenencia_reincidencia=payload["fuzzy"]["pertenencia_reincidencia"],
                     pertenencia_confianza_ocr=payload["fuzzy"]["pertenencia_confianza_ocr"],

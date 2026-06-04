@@ -811,7 +811,9 @@ function VisionTab({ event }) {
     { label: "OCR",                src: null,                       conf: ocrConf },
   ];
 
-  const procImages = stages.filter(s => s.src);   // solo etapas con imagen real
+  // etapas con imagen real Y que de verdad se aplicaron (las omitidas no se muestran
+  // en la grilla, para que concuerde con el badge "Omitido")
+  const procImages = stages.filter(s => s.src && s.applied !== false);
 
   return (
     <div className="tab-panel">

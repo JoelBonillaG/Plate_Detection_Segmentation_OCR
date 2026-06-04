@@ -26,6 +26,7 @@ import ocr as etapa3
 # post-proceso (cero reentreno): filtro geometrico de cajas + formato de placa
 from segmentacion import postprocesamiento as seg_pp
 from ocr import postprocesamiento as ocr_pp
+from deteccion_placas import deskew_rotacion as deskew   # enderezado por ROTACION (Hough)
 
 
 @dataclass
@@ -182,10 +183,11 @@ def procesar_frame_detallado(nombre, frame, m):
         print(f"  [SIN PLACA] {nombre}")
         return None
     placa_crop = etapa1.recortar(base, bbox, m.cfg.get("margen", 0.08))   # crudo
-    # ETAPA 1c: enderezar SOLO si el flag esta activo; si no, recorte nativo directo
-    # (sin warp -> sin remuestreo -> maxima calidad).
+    # ETAPA 1c: enderezar por ROTACION (deskew Hough) SOLO si el flag esta activo.
+    # Robusto (no caza esquinas) y solo rota si esta torcida; si ya esta derecha o
+    # el flag esta off -> recorte nativo directo (sin remuestreo -> maxima calidad).
     if m.usar_enderezado:
-        placa = etapa1.enderezar(placa_crop)
+        placa = deskew.enderezar_rotacion(placa_crop)
     else:
         placa = placa_crop
     etapa1.guardar_deteccion(nombre, base, bbox, m.cfg)
