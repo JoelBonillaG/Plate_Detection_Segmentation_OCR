@@ -3,8 +3,8 @@ import {
   Activity, ArrowLeft, BadgeCheck, Bell, Camera, Car, Check, CheckCircle2,
   ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Cpu,
   Database, Eye, FileText, Filter, Gauge, GitBranch, Info, LayoutDashboard,
-  Mail, Maximize2, Minimize2, Menu, Minus, Search, Settings, ShieldAlert, SlidersHorizontal,
-  UserRound, Wifi, WifiOff, X, Zap,
+  Lock, Mail, Maximize2, Minimize2, Menu, Minus, Search, Settings, ShieldAlert, SlidersHorizontal,
+  Unlock, UserRound, Wifi, WifiOff, X, Zap,
 } from "lucide-react";
 import { useRealtime } from "./context/RealtimeContext.jsx";
 
@@ -40,6 +40,10 @@ function fmtDuracion(hours) {
 function sancionTexto(fz) {
   if (fz?.esTemeraria) return "Expulsión definitiva";
   return fmtDuracion(crispToHours(fz?.crispOutput)) ?? "Sin sanción";
+}
+// Placa formateada ABC-1234 (3 letras + guion + resto).
+function fmtPlaca(s) {
+  return s && s.length > 3 ? `${s.slice(0, 3)}-${s.slice(3)}` : (s ?? "—");
 }
 
 export default function App() {
@@ -732,91 +736,125 @@ function EventHeroStrip({ event }) {
 
 /* ─── Human review box ───────────────────────────────────── */
 
-function HumanReviewBox({ event }) {
-  const [placa, setPlaca]   = useState(event.plateValidated ?? event.plateOcr);
+function ReviewModal({ event, onClose }) {
+  const [placa, setPlaca]   = useState(event.plateOcr ?? "");
   const [motivo, setMotivo] = useState("");
+  const [unlocked, setUnlocked] = useState(false);  // candado: editable solo si se desbloquea
   const [status, setStatus] = useState("idle"); // idle | loading | ok | error
   const [msg, setMsg]       = useState("");
 
-  // El db_id viene del backend (UUID real); si no hay, usa el id display
   const dbId = event.db_id ?? event.id;
+  const original = (event.plateOcr ?? "").toUpperCase();
+  const modified = placa.trim().toUpperCase() !== original;
+
+  const cropImg = event.images?.plateStraight ?? event.images?.plateDetected ?? event.images?.plate;
+  const over    = event.speed > event.speedLimit;
+  const excess  = event.speed - event.speedLimit;
 
   const call = async (action) => {
-    setStatus("loading");
-    setMsg("");
+    setStatus("loading"); setMsg("");
     try {
       const res = await fetch(`${API}/api/events/${dbId}/${action}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          placa_corregida: placa !== event.plateOcr ? placa : null,
+          placa_corregida: modified ? placa.trim().toUpperCase() : null,
           motivo: motivo || null,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? "Error del servidor");
       setStatus("ok");
-      if (action === "approve") {
-        setMsg(data.email_sent > 0
-          ? `Sanción aprobada. Correo enviado al ingeniero.`
-          : "Sanción aprobada. Correo en cola (verificar SMTP en .env)."
-        );
-      } else {
-        setMsg("Evento rechazado correctamente.");
-      }
-    } catch (e) {
-      setStatus("error");
-      setMsg(e.message);
-    }
+      setMsg(action === "approve"
+        ? (data["email-sent"] > 0 ? "Sanción aprobada. Correo enviado al ingeniero."
+                                  : "Sanción aprobada (correo en cola u OFF).")
+        : "Evento rechazado correctamente.");
+    } catch (e) { setStatus("error"); setMsg(e.message); }
   };
 
-  if (status === "ok") {
-    return (
-      <div className="human-review-box">
-        <div className="human-review-header" style={{ background: "#16a34a" }}>
-          <Check size={16} /> Acción registrada
-        </div>
-        <div className="human-review-body">
-          <p style={{ fontSize: ".875rem", color: "#15803d", fontWeight: 600 }}>{msg}</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="human-review-box">
-      <div className="human-review-header">
-        <ShieldAlert size={16} /> Revisión humana requerida
-      </div>
-      <div className="human-review-body">
-        <div className="form-field">
-          <label className="form-label">Placa validada</label>
-          <input className="form-input" value={placa} onChange={e => setPlaca(e.target.value.toUpperCase())} />
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="review-modal" onClick={e => e.stopPropagation()}>
+        <div className="review-modal-head">
+          <span><ShieldAlert size={18} /> Revisión y aprobación</span>
+          <button className="modal-close" onClick={onClose}><X size={18} /></button>
         </div>
-        <div className="form-field">
-          <label className="form-label">Motivo (opcional)</label>
-          <textarea className="form-textarea" placeholder="Registrar motivo si se modifica…"
-            value={motivo} onChange={e => setMotivo(e.target.value)} />
-        </div>
-        {status === "error" && (
-          <p style={{ fontSize: ".78rem", color: "var(--uta-red)", margin: 0 }}>{msg}</p>
+
+        {status === "ok" ? (
+          <div className="review-modal-body" style={{ textAlign: "center", padding: "36px 24px" }}>
+            <Check size={44} color="#16a34a" />
+            <p style={{ fontWeight: 700, color: "#15803d", margin: "12px 0 16px" }}>{msg}</p>
+            <button className="btn btn-approve btn-md" onClick={onClose}>Cerrar</button>
+          </div>
+        ) : (
+          <div className="review-modal-body">
+            {/* Evidencia: recorte de la placa (no el carro entero) */}
+            {cropImg && (
+              <div className="review-crop">
+                <img src={cropImg} alt="Placa detectada" />
+                <span>Recorte de la placa — evidencia</span>
+              </div>
+            )}
+
+            {/* Placa leída (vistosa) + corrección */}
+            <div className="review-plate-block">
+              <div className="review-plate-big">{fmtPlaca(placa.toUpperCase())}</div>
+              <div className="review-plate-conf">OCR {Math.round((event.ocrConfidence ?? 0) * 100)}%</div>
+            </div>
+            <div className="form-field">
+              <label className="form-label">Placa {unlocked ? "(editable)" : "(bloqueada)"}</label>
+              <div className="plate-edit-row">
+                <input className="form-input" value={placa} disabled={!unlocked}
+                       onChange={e => setPlaca(e.target.value.toUpperCase())} />
+                <button type="button"
+                        className={`lock-btn${unlocked ? " unlocked" : ""}`}
+                        onClick={() => setUnlocked(u => !u)}
+                        title={unlocked ? "Bloquear placa" : "Desbloquear para corregir"}>
+                  {unlocked ? <Unlock size={15} /> : <Lock size={15} />}
+                </button>
+              </div>
+            </div>
+            {(unlocked || modified) && (
+              <div className="review-warn">
+                <ShieldAlert size={14} />
+                <span>Estás por <b>modificar</b> la placa — el cambio quedará <b>registrado</b> en el historial.</span>
+              </div>
+            )}
+
+            {/* Resolución del sistema difuso (lo que se sanciona) */}
+            <div className="review-fuzzy">
+              <div className="review-fuzzy-title"><Zap size={14} /> Resolución del sistema difuso</div>
+              <div className="review-fuzzy-grid">
+                <div><span>Velocidad</span><b className={over ? "text-danger" : ""}>{event.speed} km/h</b></div>
+                <div><span>Exceso</span><b className={over ? "text-danger" : ""}>{over ? `+${excess} km/h` : "—"}</b></div>
+                <div><span>Riesgo</span><b style={{ color: ["alto","critico"].includes(event.riskLevel) ? "var(--uta-red)" : "var(--green)" }}>{event.riskLevel?.toUpperCase()}</b></div>
+              </div>
+              <div className="review-susp">
+                <span>Suspensión sugerida</span>
+                <b>{sancionTexto(event.fuzzySystem)}</b>
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label className="form-label">Motivo (opcional)</label>
+              <textarea className="form-textarea" placeholder="Registrar motivo si se modifica…"
+                value={motivo} onChange={e => setMotivo(e.target.value)} />
+            </div>
+
+            {status === "error" && (
+              <p style={{ fontSize: ".78rem", color: "var(--uta-red)", margin: 0 }}>{msg}</p>
+            )}
+
+            <div className="review-actions">
+              <button className="btn btn-approve btn-md" disabled={status === "loading"} onClick={() => call("approve")}>
+                <Check size={15} /> {status === "loading" ? "Enviando…" : "Aprobar y notificar"}
+              </button>
+              <button className="btn btn-reject btn-md" disabled={status === "loading"} onClick={() => call("reject")}>
+                <X size={15} /> Rechazar
+              </button>
+            </div>
+          </div>
         )}
-        <div className="review-actions">
-          <button
-            className="btn btn-approve btn-md"
-            disabled={status === "loading"}
-            onClick={() => call("approve")}
-          >
-            <Check size={15} /> {status === "loading" ? "Enviando…" : "Aprobar y notificar"}
-          </button>
-          <button
-            className="btn btn-reject btn-md"
-            disabled={status === "loading"}
-            onClick={() => call("reject")}
-          >
-            <X size={15} /> Rechazar
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -827,6 +865,7 @@ function HumanReviewBox({ event }) {
 function ResumenTab({ event }) {
   const over   = event.speed > event.speedLimit;
   const excess = event.speed - event.speedLimit;
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   return (
     <div className="tab-panel">
@@ -901,10 +940,14 @@ function ResumenTab({ event }) {
           </div>
 
           {event.reviewStatus === "pendiente" && (
-            <HumanReviewBox event={event} />
+            <button className="review-cta" onClick={() => setReviewOpen(true)}>
+              <ShieldAlert size={16} /> Revisar y aprobar
+            </button>
           )}
         </div>
       </div>
+
+      {reviewOpen && <ReviewModal event={event} onClose={() => setReviewOpen(false)} />}
     </div>
   );
 }
@@ -917,8 +960,6 @@ function VisionTab({ event }) {
   const perChar = cv.ocrPerChar ?? [];
   const ocrConf = event.ocrConfidence ?? null;
   const pct = c => Math.round((c ?? 0) * 100);
-  // placa formateada ABC-1234 (3 letras + guion + resto)
-  const fmtPlaca = s => (s && s.length > 3 ? `${s.slice(0, 3)}-${s.slice(3)}` : (s ?? "—"));
 
   // Etapas. Las CNN tienen confianza real (barra). Enderezado/Filtros/Segmentación
   // son CV determinista -> sin barra, solo "✓ Aplicado" (no se inventan %).
