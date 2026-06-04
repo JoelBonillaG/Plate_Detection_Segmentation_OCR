@@ -71,6 +71,8 @@ function mapBackendEvent(raw) {
           : "—",
       },
       usoFiltros:            raw.vision?.metadata?.filtros === "activos",
+      // ausente (eventos viejos) -> se asume aplicado; "omitido" -> no se enderezo
+      usoEnderezado:         raw.vision?.metadata?.enderezado !== "omitido",
       caracteresSegmentados: raw.vision?.caracteres_segmentados ?? 0,
       ocr:                   raw.vision?.resultado_ocr ?? raw.placa_ocr,
       // [{ ch, conf }] confianza real por caracter (softmax del OCR)

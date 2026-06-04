@@ -23,9 +23,9 @@ MODELOS_DIR = os.path.join(os.path.dirname(BASE), "modelos")
 # nano = el mas chico; converge mas facil desde cero y con dataset pequeno
 ARQUITECTURA = "yolo11n.yaml"
 
-EPOCAS = 10
-IMGSZ  = 416   # tamano nativo del dataset (no reescalar); multiplo de 32
-BATCH  = -1    # auto-batch: ultralytics elige segun VRAM libre (~60%)
+EPOCAS = 20
+IMGSZ  = 640   # tamano nativo del dataset (no reescalar); multiplo de 32
+BATCH  = 16    # auto-batch: ultralytics elige segun VRAM libre (~60%)
 
 
 def entrenar():

@@ -3,7 +3,7 @@ import {
   Activity, ArrowLeft, BadgeCheck, Bell, Camera, Car, Check, CheckCircle2,
   ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Cpu,
   Database, Eye, FileText, Filter, Gauge, GitBranch, Info, LayoutDashboard,
-  Mail, Maximize2, Minimize2, Menu, Search, Settings, ShieldAlert, SlidersHorizontal,
+  Mail, Maximize2, Minimize2, Menu, Minus, Search, Settings, ShieldAlert, SlidersHorizontal,
   UserRound, Wifi, WifiOff, X, Zap,
 } from "lucide-react";
 import { useRealtime } from "./context/RealtimeContext.jsx";
@@ -805,11 +805,9 @@ function VisionTab({ event }) {
   const stages = [
     { label: "Vehículo detectado", src: event.images.frame,         conf: cv.vehicleDetection.confidence },
     { label: "Placa detectada",    src: event.images.plateDetected, conf: cv.plateDetection.confidence },
-    { label: "Enderezado",         src: event.images.plateStraight, conf: null },
-    ...(cv.usoFiltros
-      ? [{ label: "Filtros aplicados", src: event.images.plateFiltered, conf: null }]
-      : []),
-    { label: "Segmentación",       src: event.images.segmentation,  conf: null },
+    { label: "Enderezado",         src: event.images.plateStraight, conf: null, applied: cv.usoEnderezado },
+    { label: "Filtros",            src: event.images.plateFiltered, conf: null, applied: cv.usoFiltros },
+    { label: "Segmentación",       src: event.images.segmentation,  conf: null, applied: true },
     { label: "OCR",                src: null,                       conf: ocrConf },
   ];
 
@@ -833,6 +831,10 @@ function VisionTab({ event }) {
                   <div className="step-conf">{pct(s.conf)}%</div>
                   <div className="step-bar"><div className="step-bar-fill" style={{ width: `${pct(s.conf)}%` }} /></div>
                 </>
+              ) : s.applied === false ? (
+                <div className="step-conf" style={{ color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <Minus size={13} /> Omitido
+                </div>
               ) : (
                 <div className="step-conf" style={{ color: "var(--green)", display: "flex", alignItems: "center", gap: 4 }}>
                   <Check size={13} /> Aplicado
@@ -871,6 +873,7 @@ function VisionTab({ event }) {
                 { label: "Conf. vehículo",         val: cv.vehicleDetection.confidence != null ? `${pct(cv.vehicleDetection.confidence)}%` : "—" },
                 { label: "Conf. placa",            val: cv.plateDetection.confidence != null ? `${pct(cv.plateDetection.confidence)}%` : "—" },
                 { label: "Caracteres segmentados", val: cv.caracteresSegmentados },
+                { label: "Enderezado",             val: cv.usoEnderezado ? "aplicado" : "omitido" },
                 { label: "Filtros",                val: cv.usoFiltros ? "aplicados" : "omitidos" },
                 { label: "Modelo OCR",             val: "CNN (clasificador por carácter)" },
               ].map(({ label, val }) => (

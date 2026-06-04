@@ -78,13 +78,20 @@ def _par_lineas(p):
 
 CFG = cargar_config()
 
-# colores BGR (constantes visuales: no son configuracion, viven en el codigo)
-COLOR_LINEA   = (0, 200, 255)   # amarillo-naranja
-COLOR_ZONA    = (0, 255, 0)     # verde (cuando esta rastreando)
-COLOR_PLACA   = (75, 130, 30)   # verde esmeralda (BGR): caja + etiqueta de la placa
-COLOR_CARRO   = (120, 65, 25)   # azul acero (BGR): caja + etiqueta del carro
-COLOR_TEXTO   = (255, 255, 255)
-COLOR_HANDLE  = (255, 0, 255)   # magenta: puntos arrastrables
+# paleta BGR (constantes visuales, no son configuracion). Tono "slate" sobrio,
+# texto anti-aliasing y paneles semi-transparentes -> overlay limpio y legible.
+COLOR_ENTRA   = (255, 176, 0)    # azul-cian: linea LEJANA (entra)
+COLOR_SALE    = (140, 210, 64)   # verde-teal: linea CERCANA (sale)
+COLOR_TRACK   = (96, 220, 130)   # verde: zona rastreando (acento activo)
+COLOR_PLACA   = (96, 200, 96)    # verde: caja de la placa
+COLOR_CARRO   = (200, 144, 56)   # azul acero: caja del carro
+COLOR_TEXTO   = (240, 240, 240)  # casi blanco
+COLOR_MUTED   = (184, 163, 148)  # gris-slate: texto secundario
+COLOR_ALERTA  = (80, 80, 235)    # rojo suave: valor fuera de rango
+COLOR_HANDLE  = (200, 120, 255)  # magenta suave: puntos arrastrables
+_PANEL_BG     = (28, 20, 12)     # fondo de panel (navy/slate oscuro)
+_PANEL_BORDE  = (70, 52, 38)     # borde sutil del panel
+_FUENTE       = cv2.FONT_HERSHEY_SIMPLEX
 
 # ── valores leidos de config.json (ver _DEFAULTS para que es cada uno) ────────
 CAMARA_IDX      = CFG["camara_idx"]
@@ -116,84 +123,117 @@ CAPTURA_DIR   = os.path.join(_AQUI, "capturas")
 
 
 # ── dibujo ────────────────────────────────────────────────────────────────
+# Estilo: todo con cv2.LINE_AA (bordes suaves, no "escalonados"), etiquetas tipo
+# chip con fondo relleno y paneles semi-transparentes. Da un look limpio/pro en
+# vez del texto crudo grueso de antes.
+
+def _texto(frame, txt, org, escala=0.5, color=COLOR_TEXTO, grosor=1):
+    cv2.putText(frame, txt, org, _FUENTE, escala, color, grosor, cv2.LINE_AA)
+
+
+def _chip(frame, txt, org, color, escala=0.46):
+    """Etiqueta 'chip': fondo relleno del color + texto blanco. org = esquina sup-izq."""
+    (tw, th), base = cv2.getTextSize(txt, _FUENTE, escala, 1)
+    px, py = 7, 5
+    x, y = org
+    cv2.rectangle(frame, (x, y), (x + tw + 2 * px, y + th + base + 2 * py),
+                  color, -1, cv2.LINE_AA)
+    _texto(frame, txt, (x + px, y + th + py), escala, (255, 255, 255), 1)
+
+
+def _panel(frame, x, y, w, filas, titulo=None):
+    """Panel semi-transparente con filas [(texto, color), ...] y titulo opcional."""
+    pad, lh = 12, 24
+    n = len(filas) + (1 if titulo else 0)
+    h = pad * 2 + lh * n
+    cap = frame.copy()
+    cv2.rectangle(cap, (x, y), (x + w, y + h), _PANEL_BG, -1)
+    cv2.addWeighted(cap, 0.66, frame, 0.34, 0, frame)
+    cv2.rectangle(frame, (x, y), (x + w, y + h), _PANEL_BORDE, 1, cv2.LINE_AA)
+    yy = y + pad + 15
+    if titulo:
+        _texto(frame, titulo, (x + pad, yy), 0.5, COLOR_TEXTO, 1)
+        yy += lh
+    for txt, color in filas:
+        _texto(frame, txt, (x + pad, yy), 0.48, color, 1)
+        yy += lh
+
 
 def dibujar_lineas(frame, zona: ZonaDeteccion, calibrar=False):
     h, w = frame.shape[:2]
     e1, e2 = zona.entra_px(w, h)
     s1, s2 = zona.sale_px(w, h)
 
-    color = COLOR_ZONA if zona.estado == "rastreando" else COLOR_LINEA
+    rastreando = zona.estado == "rastreando"
+    col_e = COLOR_TRACK if rastreando else COLOR_ENTRA
+    col_s = COLOR_TRACK if rastreando else COLOR_SALE
 
-    cv2.line(frame, e1, e2, color, 2)
-    cv2.line(frame, s1, s2, color, 2)
+    cv2.line(frame, e1, e2, col_e, 2, cv2.LINE_AA)
+    cv2.line(frame, s1, s2, col_s, 2, cv2.LINE_AA)
 
-    cv2.putText(frame, "ENTRA", (e1[0] + 5, e1[1] + 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-    cv2.putText(frame, "SALE", (s1[0] + 5, s1[1] + 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    _chip(frame, "ENTRA", (e1[0] + 6, e1[1] + 6), col_e)
+    _chip(frame, "SALE",  (s1[0] + 6, s1[1] + 6), col_s)
 
-    # puntos arrastrables
+    # puntos arrastrables (solo calibracion): relleno + anillo blanco
     if calibrar:
         for p in (e1, e2, s1, s2):
-            cv2.circle(frame, p, 8, COLOR_HANDLE, -1)
+            cv2.circle(frame, p, 6, COLOR_HANDLE, -1, cv2.LINE_AA)
+            cv2.circle(frame, p, 6, (255, 255, 255), 1, cv2.LINE_AA)
 
-    cv2.putText(frame, f"Estado: {zona.estado}", (10, h - 15),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXTO, 2)
+    # pildora de estado, abajo-izquierda (siempre)
+    estado_txt = "RASTREANDO" if rastreando else "ESPERANDO"
+    _chip(frame, estado_txt, (12, h - 32), COLOR_TRACK if rastreando else COLOR_MUTED)
 
 
 def dibujar_caja_etiqueta(frame, bbox, etiqueta, color):
-    """
-    Caja del detector con etiqueta de fondo relleno y texto blanco (estilo limpio,
-    como las cajas tipicas de YOLO). La barra va arriba de la caja; si no cabe
-    (caja pegada al borde superior), se dibuja por dentro.
-    """
+    """Caja del detector con etiqueta tipo chip (fondo relleno, texto blanco). La
+    barra va arriba de la caja; si no cabe (pegada al borde), se dibuja por dentro."""
     x1, y1, x2, y2 = bbox
-    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
 
-    fuente, escala, grosor = cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
-    (tw, th), base = cv2.getTextSize(etiqueta, fuente, escala, grosor)
+    escala, grosor = 0.5, 1
+    (tw, th), base = cv2.getTextSize(etiqueta, _FUENTE, escala, grosor)
     pad = 6
     y_barra = y1 - (th + base + pad)
     if y_barra < 0:               # no cabe arriba -> barra por dentro de la caja
         y_barra = y1
     cv2.rectangle(frame, (x1, y_barra),
-                  (x1 + tw + 2 * pad, y_barra + th + base + pad), color, -1)
-    cv2.putText(frame, etiqueta, (x1 + pad, y_barra + th + pad),
-                fuente, escala, COLOR_TEXTO, grosor, cv2.LINE_AA)
+                  (x1 + tw + 2 * pad, y_barra + th + base + pad), color, -1, cv2.LINE_AA)
+    _texto(frame, etiqueta, (x1 + pad, y_barra + th + pad), escala, (255, 255, 255), grosor)
 
 
 def dibujar_velocidad(frame, zona):
-    """Velocidad del ultimo carro -> SIEMPRE visible (tambien en demo)."""
+    """Velocidad del ultimo carro en un panel limpio arriba-derecha (siempre visible)."""
     if zona.ultima_velocidad is None:
         return
     w = frame.shape[1]
-    txt = f"Velocidad: {zona.ultima_velocidad:.1f} km/h"
-    cv2.putText(frame, txt, (w - 380, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, COLOR_ZONA, 2)
+    txt = f"{zona.ultima_velocidad:.1f} km/h"
+    (tw, th), base = cv2.getTextSize(txt, _FUENTE, 0.7, 2)
+    x1 = w - tw - 28
+    y1 = 14
+    x2 = w - 12
+    y2 = y1 + th + base + 16
+    cap = frame.copy()
+    cv2.rectangle(cap, (x1, y1), (x2, y2), _PANEL_BG, -1)
+    cv2.addWeighted(cap, 0.66, frame, 0.34, 0, frame)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), _PANEL_BORDE, 1, cv2.LINE_AA)
+    _texto(frame, "VELOCIDAD", (x1 + 12, y1 + 4 + th - 4), 0.34, COLOR_MUTED, 1)
+    _texto(frame, txt, (x1 + 12, y2 - 9), 0.7, COLOR_TRACK, 2)
 
 
 def dibujar_overlay(frame, zona, bbox):
-    """Debug (solo calibracion): ancho/nitidez en vivo + gates + distancia."""
-    y = 30
-    def linea(txt, ok=None):
-        nonlocal y
-        col = COLOR_TEXTO if ok is None else ((0, 255, 0) if ok else (0, 0, 255))
-        cv2.putText(frame, txt, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
-        y += 28
-
+    """Panel de calibracion (solo en modo calibrar): ancho de placa + distancia + teclas."""
+    filas = []
     if bbox is not None:
-        x1, y1, x2, y2 = bbox
-        ancho = x2 - x1
-        nit   = nitidez(frame[max(y1, 0):y2, max(x1, 0):x2])
-        ok_ancho = ancho >= zona.min_ancho_px and (not zona.max_ancho_px or ancho <= zona.max_ancho_px)
-        ok_nit   = nit >= zona.min_nitidez
-        linea(f"ancho placa: {ancho}px  (min {zona.min_ancho_px}, max {zona.max_ancho_px or '-'})", ok_ancho)
-        linea(f"nitidez: {nit:6.0f}  (min {zona.min_nitidez})", ok_nit)
+        ancho = bbox[2] - bbox[0]
+        ok = ancho >= zona.min_ancho_px
+        filas.append((f"Ancho placa: {ancho}px  (min {zona.min_ancho_px})",
+                      COLOR_TRACK if ok else COLOR_ALERTA))
     else:
-        linea("sin deteccion")
-
-    linea(f"distancia: {zona.distancia_m:.1f} m entre lineas")
-    linea("s=guardar config  q=salir")
+        filas.append(("Sin deteccion de placa", COLOR_MUTED))
+    filas.append((f"Distancia lineas: {zona.distancia_m:.1f} m", COLOR_TEXTO))
+    filas.append(("[s] guardar     [q] salir", COLOR_MUTED))
+    _panel(frame, 12, 12, 360, filas, titulo="CALIBRACION")
 
 
 # ── mouse: arrastrar los extremos de las lineas ─────────────────────────────
@@ -228,13 +268,13 @@ def _hacer_mouse(estado, zona):
 
 
 def _crear_trackbars(zona):
+    # SOLO los controles que de verdad se usan:
+    #   min_ancho -> gate de ancho minimo de placa para el OCR.
+    #   dist_cm   -> distancia real entre lineas (para la velocidad).
+    # Quitados: max_ancho y min_nitidez (en desuso: el "mejor" se elige por
+    # cercania, no por esos gates) -> no se muestran para no confundir.
     cv2.createTrackbar("min_ancho", VENTANA, zona.min_ancho_px, 400,
                        lambda v: setattr(zona, "min_ancho_px", v))
-    cv2.createTrackbar("max_ancho", VENTANA, zona.max_ancho_px, 600,
-                       lambda v: setattr(zona, "max_ancho_px", v))
-    cv2.createTrackbar("min_nitidez", VENTANA, int(zona.min_nitidez), 300,
-                       lambda v: setattr(zona, "min_nitidez", float(v)))
-    # distancia en cm (slider entero) -> metros
     cv2.createTrackbar("dist_cm", VENTANA, int(zona.distancia_m * 100), 3000,
                        lambda v: setattr(zona, "distancia_m", max(v, 1) / 100.0))
 

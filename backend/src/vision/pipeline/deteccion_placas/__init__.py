@@ -51,7 +51,7 @@ def procesar_frame(modelo, frame, cfg, return_bbox=False):
     if bbox is None:
         return (None, None) if return_bbox else None
     crop = recortar(frame, bbox, cfg.get("margen", 0.08))
-    placa = enderezar(crop, cfg.get("ancho_placa", 300), cfg.get("alto_placa", 100))
+    placa = enderezar(crop)
     return (placa, bbox) if return_bbox else placa
 
 
