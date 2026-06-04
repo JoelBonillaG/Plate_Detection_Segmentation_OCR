@@ -628,6 +628,75 @@ tr:hover td { background: #fafafa; }
 }
 .btn-reject:hover { background: var(--uta-red-deep); }
 
+/* Toggle global de envío de correo (kill-switch en el topbar) */
+.email-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: .72rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.email-toggle.on {
+  background: rgba(22,163,74,.12);
+  color: #16a34a;
+  border-color: rgba(22,163,74,.35);
+}
+.email-toggle.on:hover { background: rgba(22,163,74,.2); }
+.email-toggle.off {
+  background: rgba(193,32,40,.12);
+  color: var(--uta-red);
+  border-color: rgba(193,32,40,.35);
+}
+.email-toggle.off:hover { background: rgba(193,32,40,.2); }
+.email-toggle.loading {
+  background: var(--surface);
+  color: var(--muted);
+  border-color: var(--border);
+}
+.email-toggle:disabled { cursor: default; opacity: .7; }
+
+/* Boost de velocidad para presentación (suma km/h a la detección) */
+.speed-boost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: .72rem;
+  font-weight: 700;
+}
+.speed-boost.on  { background: rgba(230,126,34,.12); color: #e67e22; border-color: rgba(230,126,34,.4); }
+.speed-boost.off { background: var(--surface); color: var(--muted); }
+.speed-boost-lab { font-size: .7rem; }
+.speed-boost-input {
+  width: 42px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: .72rem;
+  font-weight: 700;
+  text-align: center;
+}
+.speed-boost-btn {
+  border: none;
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: .68rem;
+  font-weight: 800;
+  cursor: pointer;
+  color: #fff;
+}
+.speed-boost.on  .speed-boost-btn { background: #e67e22; }
+.speed-boost.off .speed-boost-btn { background: var(--muted); }
+
 .btn-icon {
   width: 34px;
   height: 34px;
@@ -1212,6 +1281,70 @@ tr:hover td { background: #fafafa; }
 
 .char-badge-ch  { font-size: .9rem; font-weight: 800; font-family: monospace; }
 .char-badge-pct { font-size: .68rem; color: var(--muted); margin-top: 2px; }
+
+/* crop del caracter encima del char leido */
+.char-crop {
+  width: 34px;
+  height: 46px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 5px;
+  image-rendering: auto;
+}
+
+/* paso 4 Clasificación: full-width, tira de crops -> lectura + placa final */
+.proc-ocr-card { display: flex; flex-direction: column; grid-column: 1 / -1; }
+.proc-ocr-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 18px 12px;
+  background: var(--bg);
+}
+.proc-ocr-strip {
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: center; gap: 12px;
+}
+.proc-ocr-char { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+/* especificidad alta para ganarle a `.proc-grid-lg .proc-img-card img` (width:100%;height:210px) */
+.proc-grid-lg .proc-ocr-card .proc-ocr-char img {
+  width: 58px; height: 80px; object-fit: contain;
+  aspect-ratio: auto;
+  background: #fff; border: 1px solid var(--border); border-radius: 5px;
+}
+.proc-ocr-ch  { font-family: monospace; font-weight: 800; font-size: 1.1rem; }
+.proc-ocr-pct { font-size: .74rem; color: var(--muted); }
+.proc-ocr-plate {
+  font-family: monospace; font-weight: 800; font-size: 1.7rem; letter-spacing: 3px;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 18px;
+}
+.proc-ocr-conf { font-size: .8rem; font-weight: 700; color: var(--green); }
+
+/* placa final formateada ABC-1234, centrada al pie del panel */
+.ocr-plate-final {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.ocr-plate-final-label {
+  font-size: .68rem; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--muted);
+}
+.ocr-plate-final-value {
+  font-family: monospace; font-weight: 800; font-size: 1.9rem;
+  letter-spacing: 3px; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 18px;
+}
 
 .tech-collapsible {
   border-top: 1px solid var(--border);

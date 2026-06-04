@@ -92,11 +92,23 @@ def mask_to_boxes(mask, original_shape, threshold, min_area_ratio, padding,
         chars = raw
 
     median_h = float(np.median([h for (_, _, _, h) in chars]))
-    expected_w = max(1.0, median_h * char_aspect)
+    median_w = float(np.median([w for (_, _, w, _) in chars]))
+    # expected_w = pitch de char. Con VARIOS blobs el ancho mediano ES el pitch real y es
+    # robusto a tilt/blur, donde char_aspect (ancho=0.6*alto) deja de valer y partia los
+    # chars de mas. Con 1-2 blobs (posible fusion total) cae al estimado por altura.
+    if len(chars) >= 3:
+        expected_w = max(median_w, median_h * char_aspect * 0.8)
+    else:
+        expected_w = max(1.0, median_h * char_aspect)
 
     split = []
     for (x, y, w, h) in chars:
-        split.extend(split_box_by_projection(binary, x, y, w, h, expected_w))
+        # solo intenta partir si el blob es claramente mas ancho que un char (>1.5x pitch);
+        # asi no trocea un char individual un poco ancho por tilt.
+        if w >= 1.5 * expected_w:
+            split.extend(split_box_by_projection(binary, x, y, w, h, expected_w))
+        else:
+            split.append((x, y, w, h))
 
     boxes = []
     scale_x = original_w / mask_w

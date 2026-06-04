@@ -49,6 +49,7 @@ try:
         insert_vision,
     )
     from src.app.fuzzy import evaluar as fuzzy_evaluar, LIMITE_VELOCIDAD
+    from src.app.runtime import get_runtime
 
     REALTIME_ENABLED = True
     print("[REALTIME] Integracion con FastAPI activa.")
@@ -56,6 +57,8 @@ except ImportError:
     REALTIME_ENABLED = False
     LIMITE_VELOCIDAD = 20.0
     print("[REALTIME] FastAPI no disponible; modo standalone.")
+
+    def get_runtime(): return {}
 
     def insert_evento(**kw): return None
     def insert_vision(**kw): pass
@@ -99,7 +102,14 @@ def hacer_al_capturar(modelos):
     """Callback que la camara llama cuando un carro completa el cruce."""
 
     def al_capturar(nombre: str, frame, velocidad: float = 0.0):
-        velocidad = float(velocidad or 0.0)
+        # redondeo a 1 decimal en el ORIGEN -> DB, WS, correo y entrada al difuso
+        # quedan limpios (evita 1.4535666218035004 km/h en el panel).
+        velocidad = round(float(velocidad or 0.0), 1)
+        # SPEED BOOST (presentacion): suma km/h configurables desde el frontend para
+        # demostrar la sancion difusa en tiempo real (los carros del video van lento).
+        rc = get_runtime()
+        if rc.get("speed_boost_enabled"):
+            velocidad = round(velocidad + float(rc.get("speed_boost_kmh", 0) or 0), 1)
         resultado = cadena.procesar_frame_detallado(nombre, frame, modelos)
         if resultado is None:
             return None
@@ -132,26 +142,36 @@ def hacer_al_capturar(modelos):
         estado_rev  = "automatica" if tipo_evento == "normal" else "pendiente"
 
         evento_id_full = f"EVT-{str(uuid.uuid4())[:8].upper()}"
-        ruta_frame = guardar_frame(evento_id_full, "frame.jpg", frame)
-        ruta_placa = guardar_frame(evento_id_full, "placa.jpg", resultado.placa)  # enderezada
-        # recorte CRUDO de la placa (antes de enderezar)
+
+        # frame.jpg = miniatura del evento en la lista -> se escribe ANTES del broadcast
+        # para que NO salga la imagen rota. El resto (detalle: se abre al click ms despues)
+        # se difiere para no añadir latencia a la llegada del evento.
+        guardar_antes = [("frame.jpg", frame), ("placa.jpg", resultado.placa)]
+        por_guardar = []
+        ruta_frame = storage_path(evento_id_full, "frame.jpg")
+        ruta_placa = storage_path(evento_id_full, "placa.jpg")  # enderezada
+
         ruta_placa_detectada = None
         if resultado.placa_crop is not None and resultado.placa_crop.size:
-            ruta_placa_detectada = guardar_frame(
-                evento_id_full, "placa_detectada.jpg", resultado.placa_crop)
-        # placa filtrada (solo si paso por filtros)
+            ruta_placa_detectada = storage_path(evento_id_full, "placa_detectada.jpg")
+            por_guardar.append(("placa_detectada.jpg", resultado.placa_crop))
+
         ruta_filtrada = None
         if resultado.uso_filtros and resultado.entrada_segmentacion is not None:
-            ruta_filtrada = guardar_frame(
-                evento_id_full,
-                "placa_filtrada.jpg",
-                resultado.entrada_segmentacion,
-            )
-        # visualizacion de la segmentacion (placa con las cajas de caracteres)
+            ruta_filtrada = storage_path(evento_id_full, "placa_filtrada.jpg")
+            por_guardar.append(("placa_filtrada.jpg", resultado.entrada_segmentacion))
+
         ruta_segmentacion = None
         if resultado.seg_overlay is not None and resultado.seg_overlay.size:
-            ruta_segmentacion = guardar_frame(
-                evento_id_full, "segmentacion.jpg", resultado.seg_overlay)
+            ruta_segmentacion = storage_path(evento_id_full, "segmentacion.jpg")
+            por_guardar.append(("segmentacion.jpg", resultado.seg_overlay))
+
+        # recorte por caracter (crop[i] <-> ocr_por_caracter[i]) para el front
+        for i, crop in enumerate(resultado.crops or []):
+            if crop is not None and getattr(crop, "size", 0) and i < len(ocr_por_caracter):
+                nombre_crop = f"char_{i:02d}.jpg"
+                ocr_por_caracter[i]["ruta"] = storage_path(evento_id_full, nombre_crop)
+                por_guardar.append((nombre_crop, crop))
 
         payload = {
             "id": evento_id_full,
@@ -204,9 +224,24 @@ def hacer_al_capturar(modelos):
             },
         }
 
-        # Broadcast al frontend ANTES de persistir en DB — el usuario lo ve sin esperar las queries
+        # 1) escribe la miniatura (frame/placa) para que la lista no muestre imagen rota
+        for nombre_img, img in guardar_antes:
+            try:
+                guardar_frame(evento_id_full, nombre_img, img)
+            except Exception as exc:
+                print(f"[IMG] No se pudo guardar {nombre_img}: {exc}")
+
+        # 2) Broadcast al frontend — ya con la miniatura en disco; el detalle (crops,
+        #    segmentacion) se escribe despues (se abre al click, ms mas tarde).
         broadcast_event(payload)
         print(f"  [EVENTO] {evento_id_full}: placa={placa_str} vel={velocidad:.1f} km/h tipo={tipo_evento}")
+
+        # 3) ahora el resto de imagenes (detalle) a disco
+        for nombre_img, img in por_guardar:
+            try:
+                guardar_frame(evento_id_full, nombre_img, img)
+            except Exception as exc:
+                print(f"[IMG] No se pudo guardar {nombre_img}: {exc}")
 
         try:
             db_id = insert_evento(

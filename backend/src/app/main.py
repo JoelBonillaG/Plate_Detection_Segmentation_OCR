@@ -33,7 +33,11 @@ from .database import (
     mark_notification_error,
     mark_notification_sent,
 )
-from .mailer import EmailPayload, send_email
+from .mailer import (
+    EmailPayload, send_email, build_detection_html,
+    email_enabled, set_email_enabled,
+)
+from .runtime import get_runtime, set_runtime
 from .realtime import get_current_frame, set_current_frame, manager, video_manager
 from .events_db import fetch_eventos, fetch_evento, _row_to_payload, approve_evento, reject_evento
 from .fuzzy import EXCESO, REINCI, SEVERIDAD, RULES, LIMITE_VELOCIDAD as FZ_LIMITE, UMBRAL_TEMERARIA as FZ_UMBRAL
@@ -198,14 +202,32 @@ def approve_event(evento_id: str, body: ReviewRequest) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    # Kill-switch: si el correo esta apagado (p.ej. probando con video) NO se envia.
+    # La notificacion queda 'pendiente' y se puede mandar luego con /notifications/send-pending.
+    if not email_enabled():
+        return {"status": "approved", "email-sent": 0, "email-skipped": True}
+
     sent = failed = 0
     try:
         notifs = fetch_pending_notifications(limit=1)
         notifs = [n for n in notifs if str(n.get("evento_id")) == evento_id]
+        # evento completo -> HTML con proceso de vision (imagenes inline) + difuso
+        ev_row = fetch_evento(evento_id)
+        ev = _row_to_payload(ev_row) if ev_row else None
+        html, inline = None, {}
+        if ev:
+            html, image_map = build_detection_html(ev)
+            for cid, rel in image_map.items():
+                ruta = STATIC_DIR / rel
+                if ruta.exists():
+                    inline[cid] = str(ruta)
+
         for n in notifs:
             body_text = n.get("mensaje", "")
             try:
-                send_email(EmailPayload(to=n["correo_destino"], subject=n["asunto"], body=body_text))
+                send_email(EmailPayload(
+                    to=n["correo_destino"], subject=n["asunto"], body=body_text,
+                    html=html, inline_images=inline or None))
                 mark_notification_sent(str(n["id"]))
                 sent += 1
             except Exception as exc:
@@ -308,6 +330,42 @@ def difuso_definiciones() -> dict:
 
 # ── Notificaciones ────────────────────────────────────────────────────────────
 
+class EmailToggleRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/email/status")
+def get_email_status() -> dict:
+    """Estado del kill-switch de correo (para el toggle del frontend)."""
+    return {"enabled": email_enabled()}
+
+
+@app.post("/api/email/status")
+def set_email_status(body: EmailToggleRequest) -> dict:
+    """Enciende/apaga el envio de correo globalmente."""
+    return {"enabled": set_email_enabled(body.enabled)}
+
+
+class SpeedBoostRequest(BaseModel):
+    enabled: bool
+    kmh: float = 0.0
+
+
+@app.get("/api/speed-boost")
+def get_speed_boost() -> dict:
+    """Estado del 'speed boost' de presentacion (km/h que se suman a la deteccion)."""
+    rc = get_runtime()
+    return {"enabled": rc.get("speed_boost_enabled", False), "kmh": rc.get("speed_boost_kmh", 0.0)}
+
+
+@app.post("/api/speed-boost")
+def set_speed_boost(body: SpeedBoostRequest) -> dict:
+    """Suma artificial de velocidad para demostrar la sancion difusa en tiempo real.
+    Lo lee el proceso de vision al capturar cada evento (storage/runtime_config.json)."""
+    rc = set_runtime(speed_boost_enabled=bool(body.enabled), speed_boost_kmh=float(body.kmh))
+    return {"enabled": rc["speed_boost_enabled"], "kmh": rc["speed_boost_kmh"]}
+
+
 class TestEmailRequest(BaseModel):
     to: EmailStr
     subject: str = "Prueba SMTP - Monitoreo vehicular"
@@ -316,6 +374,8 @@ class TestEmailRequest(BaseModel):
 
 @app.post("/notifications/test-email")
 def send_test_email(payload: TestEmailRequest) -> dict:
+    if not email_enabled():
+        raise HTTPException(status_code=409, detail="Envio de correo APAGADO (toggle en el panel).")
     try:
         send_email(EmailPayload(to=payload.to, subject=payload.subject, body=payload.body))
     except Exception as exc:
@@ -325,6 +385,8 @@ def send_test_email(payload: TestEmailRequest) -> dict:
 
 @app.post("/notifications/send-pending")
 def send_pending_notifications(limit: int = 10) -> dict:
+    if not email_enabled():
+        return {"status": "skipped", "sent": 0, "failed": 0, "reason": "correo apagado"}
     sent = failed = 0
     for n in fetch_pending_notifications(limit=limit):
         body = n.get("mensaje", "")

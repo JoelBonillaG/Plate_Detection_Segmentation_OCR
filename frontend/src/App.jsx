@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, ArrowLeft, BadgeCheck, Bell, Camera, Car, Check, CheckCircle2,
   ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Cpu,
@@ -117,6 +117,100 @@ function Sidebar({ view, setView, collapsed, onToggle, connected }) {
   );
 }
 
+/* ─── Toggle de envío de correo (kill-switch global) ──────── */
+
+function EmailToggle() {
+  const [enabled, setEnabled] = useState(null);   // null = cargando
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/api/email/status`)
+      .then(r => r.json())
+      .then(d => setEnabled(!!d.enabled))
+      .catch(() => setEnabled(null));
+  }, []);
+
+  const toggle = async () => {
+    if (busy || enabled === null) return;
+    const next = !enabled;
+    setBusy(true);
+    setEnabled(next);                       // optimista
+    try {
+      const r = await fetch(`${API}/api/email/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      const d = await r.json();
+      setEnabled(!!d.enabled);
+    } catch {
+      setEnabled(!next);                     // revierte si falla
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const on = enabled === true;
+  const cls = enabled === null ? "loading" : on ? "on" : "off";
+  return (
+    <button
+      className={`email-toggle ${cls}`}
+      onClick={toggle}
+      disabled={busy || enabled === null}
+      title={on
+        ? "Correo ENCENDIDO — se envían correos al aprobar"
+        : "Correo APAGADO — no se envían correos (ideal para probar con video)"}
+    >
+      <Mail size={15} />
+      <span>{enabled === null ? "Correo…" : on ? "Correo ON" : "Correo OFF"}</span>
+    </button>
+  );
+}
+
+/* ─── Speed boost (presentación): suma km/h a la velocidad detectada ─── */
+
+function SpeedBoost() {
+  const [enabled, setEnabled] = useState(false);
+  const [kmh, setKmh] = useState(20);
+
+  useEffect(() => {
+    fetch(`${API}/api/speed-boost`)
+      .then(r => r.json())
+      .then(d => { setEnabled(!!d.enabled); setKmh(Number(d.kmh ?? 20)); })
+      .catch(() => {});
+  }, []);
+
+  const push = next => {
+    fetch(`${API}/api/speed-boost`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next),
+    })
+      .then(r => r.json())
+      .then(d => { setEnabled(!!d.enabled); setKmh(Number(d.kmh ?? 0)); })
+      .catch(() => {});
+  };
+
+  const toggle = () => { const v = !enabled; setEnabled(v); push({ enabled: v, kmh }); };
+  const onKmh = e => {
+    const v = Math.max(0, Number(e.target.value) || 0);
+    setKmh(v);
+    if (enabled) push({ enabled, kmh: v });
+  };
+
+  return (
+    <div className={`speed-boost ${enabled ? "on" : "off"}`}
+         title="Suma km/h a la velocidad detectada (solo presentación)">
+      <Gauge size={15} />
+      <span className="speed-boost-lab">+</span>
+      <input type="number" className="speed-boost-input" value={kmh}
+             min="0" step="1" onChange={onKmh} />
+      <span className="speed-boost-lab">km/h</span>
+      <button className="speed-boost-btn" onClick={toggle}>{enabled ? "ON" : "OFF"}</button>
+    </div>
+  );
+}
+
 /* ─── Topbar ─────────────────────────────────────────────── */
 
 function Topbar({ connected, onOpenDetail }) {
@@ -141,6 +235,10 @@ function Topbar({ connected, onOpenDetail }) {
       <StatusPill icon={Gauge}        label="FPS"     value={`${systemStatus.fps}`}   tone="red" />
       <StatusPill icon={Clock3}       label="Hora"    value={systemStatus.currentTime} tone="slate" />
       <div className="topbar-spacer" />
+
+      {/* Boost de velocidad (presentación) + toggle global de correo */}
+      <SpeedBoost />
+      <EmailToggle />
 
       {/* WS indicator */}
       <div className="ws-indicator" title={connected ? "WebSocket activo" : "Sin conexión WebSocket"}>
@@ -796,6 +894,8 @@ function VisionTab({ event }) {
   const perChar = cv.ocrPerChar ?? [];
   const ocrConf = event.ocrConfidence ?? null;
   const pct = c => Math.round((c ?? 0) * 100);
+  // placa formateada ABC-1234 (3 letras + guion + resto)
+  const fmtPlaca = s => (s && s.length > 3 ? `${s.slice(0, 3)}-${s.slice(3)}` : (s ?? "—"));
 
   // Etapas. Las CNN tienen confianza real (barra). Enderezado/Filtros/Segmentación
   // son CV determinista -> sin barra, solo "✓ Aplicado" (no se inventan %).
@@ -805,7 +905,7 @@ function VisionTab({ event }) {
     { label: "Enderezado",         src: event.images.plateStraight, conf: null, applied: cv.usoEnderezado },
     { label: "Filtros",            src: event.images.plateFiltered, conf: null, applied: cv.usoFiltros },
     { label: "Segmentación",       src: event.images.segmentation,  conf: null, applied: true },
-    { label: "OCR",                src: null,                       conf: ocrConf },
+    { label: "Clasificación",      src: null,                       conf: ocrConf },
   ];
 
   // etapas con imagen real Y que de verdad se aplicaron (las omitidas no se muestran
@@ -814,36 +914,6 @@ function VisionTab({ event }) {
 
   return (
     <div className="tab-panel">
-      <div className="card">
-        <div className="card-header">
-          <div className="card-header-left"><Cpu size={16} /><h2>Etapas de procesamiento</h2></div>
-          <span style={{ fontSize: ".75rem", color: "var(--muted)" }}>Confianza real del modelo</span>
-        </div>
-        <div className="pipeline-steps">
-          {stages.map((s, i) => (
-            <div key={s.label} className="pipeline-step">
-              {i < stages.length - 1 && <ChevronRight className="step-arrow" size={16} />}
-              <div className="step-num-icon done">{i + 1}</div>
-              <div className="step-name">{s.label}</div>
-              {s.conf != null ? (
-                <>
-                  <div className="step-conf">{pct(s.conf)}%</div>
-                  <div className="step-bar"><div className="step-bar-fill" style={{ width: `${pct(s.conf)}%` }} /></div>
-                </>
-              ) : s.applied === false ? (
-                <div className="step-conf" style={{ color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
-                  <Minus size={13} /> Omitido
-                </div>
-              ) : (
-                <div className="step-conf" style={{ color: "var(--green)", display: "flex", alignItems: "center", gap: 4 }}>
-                  <Check size={13} /> Aplicado
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
       <div className="card">
         <div className="card-header"><div className="card-header-left"><Eye size={16} /><h2>Visualización del proceso</h2></div></div>
         <div className="card-body">
@@ -856,76 +926,31 @@ function VisionTab({ event }) {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-
-        <div className="tech-collapsible">
-          <button className="tech-toggle" onClick={() => setShowTech(v => !v)}>
-            <span><Info size={14} style={{ marginRight: 6, verticalAlign: "middle" }} />Información técnica</span>
-            <ChevronRight size={14} style={{ transform: showTech ? "rotate(90deg)" : "none", transition: "transform .2s" }} />
-          </button>
-          {showTech && (
-            <dl className="tech-details">
-              {[
-                { label: "ROI vehículo",           val: cv.vehicleDetection.bbox },
-                { label: "ROI placa",              val: cv.plateDetection.bbox },
-                { label: "Conf. vehículo",         val: cv.vehicleDetection.confidence != null ? `${pct(cv.vehicleDetection.confidence)}%` : "—" },
-                { label: "Conf. placa",            val: cv.plateDetection.confidence != null ? `${pct(cv.plateDetection.confidence)}%` : "—" },
-                { label: "Caracteres segmentados", val: cv.caracteresSegmentados },
-                { label: "Enderezado",             val: cv.usoEnderezado ? "aplicado" : "omitido" },
-                { label: "Filtros",                val: cv.usoFiltros ? "aplicados" : "omitidos" },
-                { label: "Modelo OCR",             val: "CNN (clasificador por carácter)" },
-              ].map(({ label, val }) => (
-                <div key={label} className="tech-item"><dt>{label}</dt><dd>{val}</dd></div>
-              ))}
-            </dl>
-          )}
-        </div>
-      </div>
-
-      {/* Resultado OCR — seccion propia a todo el ancho */}
-      <div className="card">
-        <div className="card-header">
-          <div className="card-header-left"><FileText size={16} color="var(--uta-red)" /><h2>Resultado OCR</h2></div>
-        </div>
-        <div className="card-body ocr-result-section">
-          <div className="ocr-result-main">
-            <div className="ocr-plate-display">
-              <div className="ocr-plate-text">{event.plateValidated ?? cv.ocr}</div>
-              <div className="ocr-check-badge"><Check size={12} /></div>
-            </div>
-            {ocrConf != null && (
-              <div className="ocr-conf-block">
-                <div className="ocr-conf-row">
-                  <span className="ocr-conf-label">Confianza OCR</span>
-                  <span className="ocr-conf-value">{pct(ocrConf)}%</span>
+            {/* Clasificación (OCR) = paso 4: crops segmentados -> lectura + placa final */}
+            {perChar.length > 0 && (
+              <div className="proc-img-card proc-ocr-card">
+                <div className="proc-ocr-body">
+                  <div className="proc-ocr-strip">
+                    {perChar.map((c, i) => (
+                      <div key={i} className="proc-ocr-char">
+                        {c.crop && <img src={c.crop} alt={c.ch} />}
+                        <span className="proc-ocr-ch">{c.ch}</span>
+                        <span className="proc-ocr-pct">{pct(c.conf)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="proc-ocr-plate">{fmtPlaca(event.plateValidated ?? cv.ocr)}</div>
+                  {ocrConf != null && <div className="proc-ocr-conf">Confianza {pct(ocrConf)}%</div>}
                 </div>
-                <div className="conf-bar" style={{ marginTop: 6 }}>
-                  <div className="conf-bar-fill" style={{ width: `${pct(ocrConf)}%` }} />
+                <div className="proc-img-label">
+                  <div className="proc-num">{procImages.length + 1}</div>Clasificación
                 </div>
               </div>
             )}
-            <div className="ocr-stats">
-              <div className="ocr-stat"><span className="ocr-stat-val">{perChar.length || cv.caracteresSegmentados}</span><span className="ocr-stat-lab">Caract.</span></div>
-              <div className="ocr-stat"><span className="ocr-stat-val">{ocrConf != null ? ocrConf.toFixed(2) : "—"}</span><span className="ocr-stat-lab">Conf.</span></div>
-              <div className="ocr-stat"><span className="ocr-stat-val">CNN</span><span className="ocr-stat-lab">Modelo</span></div>
-            </div>
           </div>
-          {perChar.length > 0 && (
-            <div className="ocr-result-chars">
-              <div style={{ fontSize: ".72rem", fontWeight: 700, color: "var(--muted)", marginBottom: 8, textTransform: "uppercase" }}>Confianza por carácter</div>
-              <div className="char-grid">
-                {perChar.map((c, i) => (
-                  <div key={i} className="char-badge">
-                    <span className="char-badge-ch">{c.ch}</span>
-                    <span className="char-badge-pct">{pct(c.conf)}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
     </div>
   );
 }

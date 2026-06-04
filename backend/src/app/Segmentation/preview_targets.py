@@ -46,9 +46,17 @@ def main():
     parser.add_argument("--border-weight", type=float, default=8.0)
     parser.add_argument("--num", type=int, default=6)
     parser.add_argument("--output-dir", default="preview_targets")
+    parser.add_argument("--filter", action="store_true",
+                        help="Aplica el filtro de calidad (util para revisar UK/Brasil).")
     args = parser.parse_args()
 
-    pairs = collect_pairs(Path(args.dataset), args.split)
+    # collect_pairs ahora espera una lista de datasets (dicts). Para previsualizar
+    # un solo dataset lo envolvemos; --filter activa el mismo gate del entrenamiento.
+    pairs = collect_pairs(
+        [{"name": Path(args.dataset).name, "path": Path(args.dataset),
+          "filter": args.filter, "max": 0, "splits": (args.split,)}],
+        args.split,
+    )
     if not pairs:
         raise ValueError("No se encontraron pares imagen/label.")
 

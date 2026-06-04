@@ -24,6 +24,8 @@ const staticUrl = p => (p ? `${API_BASE}/static/${p}` : null);
 
 // Postgres NUMERIC llega como string ("0.7743"); normaliza a number o null.
 const num = v => (v === null || v === undefined || v === "" ? null : Number(v));
+// velocidad cruda llega con muchos decimales (ej. 1.4535666218035004) -> 1 decimal.
+const round1 = v => { const n = num(v); return n === null ? null : Math.round(n * 10) / 10; };
 
 function mapBackendEvent(raw) {
   return {
@@ -31,7 +33,7 @@ function mapBackendEvent(raw) {
     db_id:              raw.db_id ?? raw.id,   // UUID real para llamadas PATCH
     plateOcr:           raw.placa_ocr,
     plateValidated:     raw.placa_validada ?? raw.placa_ocr,
-    speed:              raw.velocidad,
+    speed:              round1(raw.velocidad),
     speedLimit:         raw.limite_velocidad,
     type:               raw.tipo_evento,
     reviewStatus:       raw.estado_revision,
@@ -68,13 +70,13 @@ function mapBackendEvent(raw) {
       usoEnderezado:         raw.vision?.metadata?.enderezado !== "omitido",
       caracteresSegmentados: raw.vision?.caracteres_segmentados ?? 0,
       ocr:                   raw.vision?.resultado_ocr ?? raw.placa_ocr,
-      // [{ ch, conf }] confianza real por caracter (softmax del OCR)
+      // [{ ch, conf, crop }] confianza real por caracter (softmax del OCR) + crop del char
       ocrPerChar: (raw.vision?.ocr_por_caracter ?? []).map(c => ({
-        ch: c.caracter, conf: num(c.confianza),
+        ch: c.caracter, conf: num(c.confianza), crop: staticUrl(c.ruta),
       })),
     },
     fuzzySystem: {
-      speedExcess:            raw.fuzzy?.exceso_velocidad ?? 0,
+      speedExcess:            round1(raw.fuzzy?.exceso_velocidad) ?? 0,
       risk:                   raw.fuzzy?.nivel_riesgo ?? raw.nivel_riesgo,
       suggestedPenaltyDays:   raw.fuzzy?.dias_sancion_sugeridos ?? 0,
       activatedRules:         raw.fuzzy?.reglas_activadas ?? [],
