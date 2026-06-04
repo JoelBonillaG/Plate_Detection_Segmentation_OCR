@@ -41,13 +41,6 @@ function mapBackendEvent(raw) {
     ocrConfidence:      num(raw.confianza_ocr),
     recurrenceCount:    raw.reincidencias ?? 0,
     dateTime:           raw.fecha_hora?.replace("T", " ").slice(0, 19) ?? new Date().toISOString().replace("T", " ").slice(0, 19),
-    vehicle: {
-      brand:      raw.vehiculo?.marca      ?? "—",
-      model:      raw.vehiculo?.modelo     ?? "—",
-      color:      raw.vehiculo?.color      ?? "—",
-      ownerName:  raw.vehiculo?.propietario_nombre  ?? "—",
-      ownerEmail: raw.vehiculo?.propietario_correo  ?? "—",
-    },
     images: {
       // backend sirve archivos estaticos bajo /static/. null = no disponible.
       frame:         staticUrl(raw.imagen_frame),

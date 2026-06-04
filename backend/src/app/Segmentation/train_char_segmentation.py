@@ -11,6 +11,14 @@ from tensorflow.keras import layers, models
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
+_HERE = Path(__file__).parent
+DATASETS = [
+    _HERE / "Datasets" / "lpr character segmentation.v3i.yolov8",
+    _HERE.parent / "ORC" / "Datasets_Crudos" / "en.v4i.yolov8",
+    _HERE.parent / "ORC" / "Datasets_Crudos" / "plate-ocr.v4i.yolov8",
+]
+OUTPUT_DIR = _HERE / "Models"
+
 
 def find_image(images_dir, stem):
     for extension in IMAGE_EXTENSIONS:
@@ -20,18 +28,24 @@ def find_image(images_dir, stem):
     return None
 
 
-def collect_pairs(dataset_dir, split):
-    images_dir = dataset_dir / split / "images"
-    labels_dir = dataset_dir / split / "labels"
+def collect_pairs(dataset_dirs, split):
     pairs = []
+    for dataset_dir in dataset_dirs:
+        dataset_dir = Path(dataset_dir)
+        images_dir = dataset_dir / split / "images"
+        labels_dir = dataset_dir / split / "labels"
 
-    if not images_dir.exists() or not labels_dir.exists():
-        return pairs
+        if not images_dir.exists() or not labels_dir.exists():
+            continue
 
-    for label_path in sorted(labels_dir.glob("*.txt")):
-        image_path = find_image(images_dir, label_path.stem)
-        if image_path is not None:
-            pairs.append((image_path, label_path))
+        found = 0
+        for label_path in sorted(labels_dir.glob("*.txt")):
+            image_path = find_image(images_dir, label_path.stem)
+            if image_path is not None:
+                pairs.append((image_path, label_path))
+                found += 1
+
+        print(f"  [{split}] {dataset_dir.name}: {found} pares")
 
     return pairs
 
@@ -287,43 +301,42 @@ class MaskedBinaryIoU(tf.keras.metrics.BinaryIoU):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Entrena una CNN tipo U-Net para segmentar caracteres en placas."
-    )
-    parser.add_argument(
-        "--dataset",
-        default="Datasets/lpr character segmentation.v3i.yolov8",
-        help="Dataset con labels en formato txt (clase x y w h). NO se usa el modelo YOLO.",
-    )
-    parser.add_argument("--output-dir", default="Models")
-    parser.add_argument("--model-name", default="char_segmentation_unet.keras")
-    parser.add_argument("--height", type=int, default=96)
-    parser.add_argument("--width", type=int, default=256)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument(
-        "--sep-ratio", type=float, default=0.08,
-        help="Medio ancho del separador tallado entre chars (fraccion de la altura del char).",
-    )
-    parser.add_argument(
-        "--shrink-y", type=float, default=0.95,
-        help="Factor de alto de la mascara (evita tocar el marco de la placa).",
-    )
-    parser.add_argument(
-        "--border-weight", type=float, default=8.0,
-        help="Peso del costo en el gap entre chars. 1.0 = desactiva el mapa de pesos.",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir",    default=str(OUTPUT_DIR))
+    parser.add_argument("--model-name",    default="char_segmentation_unet.keras")
+    parser.add_argument("--height",        type=int,   default=96)
+    parser.add_argument("--width",         type=int,   default=256)
+    parser.add_argument("--batch-size",    type=int,   default=16)
+    parser.add_argument("--epochs",        type=int,   default=50)
+    parser.add_argument("--sep-ratio",     type=float, default=0.08)
+    parser.add_argument("--shrink-y",      type=float, default=0.95)
+    parser.add_argument("--border-weight", type=float, default=8.0)
     args = parser.parse_args()
 
-    dataset_dir = Path(args.dataset)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_pairs = collect_pairs(dataset_dir, "train")
-    valid_pairs = collect_pairs(dataset_dir, "valid")
+    print("Recolectando pares imagen/label:")
+    train_pairs = collect_pairs(DATASETS, "train")
+    valid_pairs = collect_pairs(DATASETS, "valid")
 
-    print(f"Train pares imagen/label: {len(train_pairs)}")
-    print(f"Valid pares imagen/label: {len(valid_pairs)}")
+    print(f"Train total: {len(train_pairs)}")
+    print(f"Valid total: {len(valid_pairs)}")
+
+    # Justificacion formula docente adaptada a U-Net (fully convolutional, sin Dense)
+    # Bridge = bottleneck: 256x96 / (2^3) = 32x12 = 384 posiciones x 256 filtros
+    bridge_positions = (args.width // 8) * (args.height // 8)
+    bridge_active    = int(256 * (1 - 0.30))
+    required_pixels  = bridge_positions * bridge_active * 1
+    pixels_per_image = args.width * args.height
+    min_images       = -(-required_pixels // pixels_per_image)  # ceil division
+    print(f"\nJustificacion formula (U-Net, fully convolutional):")
+    print(f"  Input: {args.width}x{args.height} = {pixels_per_image:,} px/imagen")
+    print(f"  Bridge: {args.width//8}x{args.height//8} = {bridge_positions} posiciones "
+          f"x 256 filtros x Dropout(0.30) = {bridge_active} activos")
+    print(f"  Requerido: {bridge_positions} x {bridge_active} x 1 = {required_pixels:,} pixeles")
+    print(f"  Min imagenes: ceil({required_pixels:,} / {pixels_per_image:,}) = {min_images}")
+    print(f"  Tenemos: {len(train_pairs):,} >> {min_images} ✓ (sin necesidad de K-Fold)")
     print(f"Tamano de entrada: {args.width}x{args.height}x1")
     print(f"sep_ratio={args.sep_ratio}  shrink_y={args.shrink_y}  border_weight={args.border_weight}")
 

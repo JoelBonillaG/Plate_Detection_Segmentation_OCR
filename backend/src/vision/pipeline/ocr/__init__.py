@@ -21,8 +21,8 @@ from .test_plate import prepare_crop, load_classes
 _AQUI        = os.path.dirname(os.path.abspath(__file__))
 # usar el .keras en formato HDF5 (legible por TF/Keras 2.10).
 # OJO: los .keras de "Respaldo Modelo/" estan en formato zip (Keras 3) y NO cargan aqui.
-_MODELO_DEF  = os.path.join(_AQUI, "Modelos", "best_cnn_ocr_uk.keras")
-_CLASSES_DEF = os.path.join(_AQUI, "Modelos", "classes_uk.txt")
+_MODELO_DEF  = os.path.join(_AQUI, "Modelos", "best_cnn_ocr.keras")
+_CLASSES_DEF = os.path.join(_AQUI, "Modelos", "classes.txt")
 _SALIDAS_DEF = os.path.join(_AQUI, "salidas")
 
 

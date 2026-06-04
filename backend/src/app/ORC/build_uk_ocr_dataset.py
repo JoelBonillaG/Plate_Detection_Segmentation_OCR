@@ -8,7 +8,17 @@ import numpy as np
 
 
 VALID_CLASSES = set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+_DATASETS = Path(__file__).parent / "Datasets_Crudos"
+DATASET_UK  = _DATASETS / "en.v4i.yolov8"
+DATASET_BR  = _DATASETS / "plate-ocr.v4i.yolov8"
+OUTPUT_DIR  = Path(__file__).parent / "Dataset_OCR_Final"
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+
+def normalize_class_name(name):
+    # Brasil usa nombres como '-0-', '-1-' -> strip guiones -> '0', '1'
+    return name.strip("-")
 
 
 def read_class_names(data_yaml_path):
@@ -100,7 +110,7 @@ def count_files(path, pattern):
     return sum(1 for _ in path.glob(pattern))
 
 
-def convert_split(dataset_dir, output_dir, split, class_names, output_size, padding_ratio, log_every):
+def convert_split(dataset_dir, output_dir, split, class_names, output_size, padding_ratio, log_every, prefix=""):
     images_dir = dataset_dir / split / "images"
     labels_dir = dataset_dir / split / "labels"
 
@@ -151,7 +161,7 @@ def convert_split(dataset_dir, output_dir, split, class_names, output_size, padd
                 skipped += 1
                 continue
 
-            class_name = class_names[class_id]
+            class_name = normalize_class_name(class_names[class_id])
             if class_name not in VALID_CLASSES:
                 skipped += 1
                 continue
@@ -173,7 +183,7 @@ def convert_split(dataset_dir, output_dir, split, class_names, output_size, padd
                 skipped += 1
                 continue
 
-            output_name = f"{label_path.stem}_{line_index:02d}.png"
+            output_name = f"{prefix}{label_path.stem}_{line_index:02d}.png"
             output_path = output_dir / split / class_name / output_name
             cv2.imwrite(str(output_path), normalized)
 
@@ -223,20 +233,43 @@ def print_class_summary(results):
         print(f"{class_name:>5} {train_count:8d} {valid_count:8d} {test_count:8d} {total:8d}")
 
 
+def process_dataset(dataset_dir, output_dir, output_size, padding_ratio, log_every, prefix=""):
+    data_yaml_path = dataset_dir / "data.yaml"
+    if not data_yaml_path.exists():
+        raise FileNotFoundError(f"No existe: {data_yaml_path}")
+
+    class_names = read_class_names(data_yaml_path)
+    invalid_names = [
+        name for name in class_names
+        if normalize_class_name(name) not in VALID_CLASSES
+    ]
+    if invalid_names:
+        print(f"Clases ignoradas (no OCR estandar): {invalid_names}")
+
+    results = {}
+    for split in ("train", "valid", "test"):
+        results[split] = convert_split(
+            dataset_dir=dataset_dir,
+            output_dir=output_dir,
+            split=split,
+            class_names=class_names,
+            output_size=output_size,
+            padding_ratio=padding_ratio,
+            log_every=max(1, log_every),
+            prefix=prefix,
+        )
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Convierte el dataset UK YOLOv8 a crops OCR separados en train/valid/test."
+        description="Convierte datasets YOLOv8 a crops OCR separados en train/valid/test."
     )
-    parser.add_argument(
-        "--dataset",
-        default="Datasets_Crudos/en.v4i.yolov8",
-        help="Ruta del dataset UK YOLOv8.",
-    )
-    parser.add_argument(
-        "--output",
-        default="Dataset_OCR_Final",
-        help="Ruta de salida para los crops OCR.",
-    )
+    parser.add_argument("--dataset", default=str(DATASET_UK))
+    parser.add_argument("--brazil-dataset", default=str(DATASET_BR))
+    parser.add_argument("--brazil-only", action="store_true",
+                        help="Solo procesa Brasil (omite UK).")
+    parser.add_argument("--output", default=str(OUTPUT_DIR))
     parser.add_argument(
         "--size",
         type=int,
@@ -262,35 +295,57 @@ def main():
     )
     args = parser.parse_args()
 
-    dataset_dir = Path(args.dataset)
     output_dir = Path(args.output)
-    data_yaml_path = dataset_dir / "data.yaml"
-
-    if not data_yaml_path.exists():
-        raise FileNotFoundError(f"No existe: {data_yaml_path}")
-
-    class_names = read_class_names(data_yaml_path)
-    invalid_names = [name for name in class_names if name not in VALID_CLASSES]
-    if invalid_names:
-        print(f"Clases ignoradas por no ser OCR estandar: {invalid_names}")
-
     prepare_output_dirs(output_dir, clean=args.clean)
 
-    results = {}
-    for split in ("train", "valid", "test"):
-        results[split] = convert_split(
-            dataset_dir=dataset_dir,
+    all_results = {}
+
+    if not args.brazil_only:
+        print("\n=== Procesando UK ===")
+        uk_results = process_dataset(
+            dataset_dir=Path(args.dataset),
             output_dir=output_dir,
-            split=split,
-            class_names=class_names,
             output_size=args.size,
             padding_ratio=args.padding,
-            log_every=max(1, args.log_every),
+            log_every=args.log_every,
+            prefix="",
         )
+        for split, r in uk_results.items():
+            all_results.setdefault(split, {
+                "saved": 0, "skipped": 0, "missing_images": 0,
+                "class_counts": {c: 0 for c in sorted(VALID_CLASSES)},
+            })
+            all_results[split]["saved"] += r["saved"]
+            all_results[split]["skipped"] += r["skipped"]
+            all_results[split]["missing_images"] += r["missing_images"]
+            for cls, cnt in r["class_counts"].items():
+                all_results[split]["class_counts"][cls] = \
+                    all_results[split]["class_counts"].get(cls, 0) + cnt
+
+    print("\n=== Procesando Brasil ===")
+    br_results = process_dataset(
+        dataset_dir=Path(args.brazil_dataset),
+        output_dir=output_dir,
+        output_size=args.size,
+        padding_ratio=args.padding,
+        log_every=args.log_every,
+        prefix="br_",
+    )
+    for split, r in br_results.items():
+        all_results.setdefault(split, {
+            "saved": 0, "skipped": 0, "missing_images": 0,
+            "class_counts": {c: 0 for c in sorted(VALID_CLASSES)},
+        })
+        all_results[split]["saved"] += r["saved"]
+        all_results[split]["skipped"] += r["skipped"]
+        all_results[split]["missing_images"] += r["missing_images"]
+        for cls, cnt in r["class_counts"].items():
+            all_results[split]["class_counts"][cls] = \
+                all_results[split]["class_counts"].get(cls, 0) + cnt
 
     classes_path = write_classes_file(output_dir)
 
-    print_class_summary(results)
+    print_class_summary(all_results)
     print(f"\nDataset OCR generado en: {output_dir.resolve()}")
     print(f"Archivo de clases: {classes_path.resolve()}")
 

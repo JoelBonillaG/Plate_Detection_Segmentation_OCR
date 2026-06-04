@@ -34,6 +34,7 @@ class Settings:
     smtp_password: str
     smtp_from: str
     smtp_encryption: str
+    engineer_email: str
 
     def __init__(self) -> None:
         self.postgres_db = os.getenv("POSTGRES_DB", "monitoreo_vehicular")
@@ -53,6 +54,7 @@ class Settings:
         self.smtp_password = os.getenv("SMTP_PASSWORD", "")
         self.smtp_from = os.getenv("SMTP_FROM", self.smtp_user)
         self.smtp_encryption = os.getenv("SMTP_ENCRYPTION", "starttls").lower()
+        self.engineer_email  = os.getenv("ENGINEER_EMAIL", self.smtp_user)
 
     @property
     def database_url(self) -> str:

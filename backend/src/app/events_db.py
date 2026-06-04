@@ -27,7 +27,6 @@ def insert_evento(
     reincidencias: int,
     imagen_frame: str,
     imagen_placa: str,
-    vehiculo_id: str | None = None,
     observacion_admin: str | None = None,
 ) -> str:
     """Inserta un evento y devuelve su UUID."""
@@ -37,13 +36,13 @@ def insert_evento(
             cur.execute(
                 """
                 INSERT INTO eventos (
-                    id, vehiculo_id, placa_ocr, placa_validada,
+                    id, placa_ocr, placa_validada,
                     velocidad, limite_velocidad, tipo_evento, estado_revision,
                     estado_notificacion, nivel_riesgo, dias_sancion_sugeridos,
                     confianza_ocr, reincidencias, imagen_frame, imagen_placa,
                     observacion_admin
                 ) VALUES (
-                    %s, %s, %s, %s,
+                    %s, %s, %s,
                     %s, %s, %s, %s,
                     %s, %s, %s,
                     %s, %s, %s, %s,
@@ -51,7 +50,7 @@ def insert_evento(
                 )
                 """,
                 (
-                    evento_id, vehiculo_id, placa_ocr.upper(), (placa_validada or placa_ocr).upper(),
+                    evento_id, placa_ocr.upper(), (placa_validada or placa_ocr).upper(),
                     velocidad, limite_velocidad, tipo_evento, estado_revision,
                     estado_notificacion, nivel_riesgo, dias_sancion_sugeridos,
                     confianza_ocr, reincidencias, imagen_frame, imagen_placa,
@@ -145,27 +144,6 @@ def insert_difuso(
         conn.commit()
 
 
-def lookup_vehiculo_id(placa: str) -> str | None:
-    """Devuelve el UUID del vehículo o None si no existe."""
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM vehiculos WHERE placa = %s", (placa.upper(),))
-            row = cur.fetchone()
-            return str(row["id"]) if row else None
-
-
-def lookup_vehiculo_info(vehiculo_id: str) -> dict | None:
-    """Devuelve nombre y correo del propietario dado el UUID del vehículo."""
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT propietario_nombre, propietario_correo FROM vehiculos WHERE id = %s",
-                (vehiculo_id,),
-            )
-            row = cur.fetchone()
-            return dict(row) if row else None
-
-
 def count_reincidencias(placa: str) -> int:
     """Cuenta infracciones/graves previas del vehículo."""
     with get_connection() as conn:
@@ -199,9 +177,6 @@ def fetch_eventos(limit: int = 50, offset: int = 0) -> list[dict]:
                     e.imagen_frame, e.imagen_placa,
                     e.fecha_hora, e.observacion_admin,
 
-                    v.marca, v.modelo, v.color,
-                    v.propietario_nombre, v.propietario_correo,
-
                     vis.vehiculo_detectado, vis.confianza_vehiculo,
                     vis.bbox_vehiculo, vis.placa_detectada,
                     vis.confianza_placa, vis.bbox_placa,
@@ -219,7 +194,6 @@ def fetch_eventos(limit: int = 50, offset: int = 0) -> list[dict]:
                     d.reglas_activadas, d.salida_crisp
 
                 FROM eventos e
-                LEFT JOIN vehiculos                v   ON v.id  = e.vehiculo_id
                 LEFT JOIN evento_vision_computadora vis ON vis.evento_id = e.id
                 LEFT JOIN evento_sistema_difuso     d   ON d.evento_id   = e.id
                 ORDER BY e.fecha_hora DESC
@@ -245,8 +219,6 @@ def fetch_evento(evento_id: str) -> dict | None:
                     e.confianza_ocr, e.reincidencias,
                     e.imagen_frame, e.imagen_placa,
                     e.fecha_hora, e.observacion_admin,
-                    v.marca, v.modelo, v.color,
-                    v.propietario_nombre, v.propietario_correo,
                     vis.confianza_vehiculo, vis.bbox_vehiculo,
                     vis.confianza_placa, vis.bbox_placa,
                     vis.ruta_placa_detectada, vis.ruta_placa_enderezada,
@@ -259,7 +231,6 @@ def fetch_evento(evento_id: str) -> dict | None:
                     d.nivel_riesgo AS fuzzy_riesgo, d.dias_sancion_sugeridos AS fuzzy_dias,
                     d.reglas_activadas, d.salida_crisp
                 FROM eventos e
-                LEFT JOIN vehiculos v ON v.id = e.vehiculo_id
                 LEFT JOIN evento_vision_computadora vis ON vis.evento_id = e.id
                 LEFT JOIN evento_sistema_difuso d ON d.evento_id = e.id
                 WHERE e.id = %s
@@ -286,42 +257,59 @@ def approve_evento(evento_id: str, placa_corregida: str | None, motivo: str | No
                     (evento_id,),
                 )
 
-            # Obtener datos para la notificación
+            # Obtener datos para la notificación al ingeniero
             cur.execute(
                 """
                 SELECT e.placa_validada, e.placa_ocr, e.velocidad, e.limite_velocidad,
-                       e.dias_sancion_sugeridos, e.tipo_evento,
-                       v.propietario_correo, v.propietario_nombre
-                FROM eventos e LEFT JOIN vehiculos v ON v.id = e.vehiculo_id
+                       e.dias_sancion_sugeridos, e.tipo_evento, e.nivel_riesgo,
+                       e.confianza_ocr, e.reincidencias,
+                       vis.confianza_vehiculo, vis.confianza_placa,
+                       vis.caracteres_segmentados, vis.metadata AS vision_metadata,
+                       d.exceso_velocidad, d.reglas_activadas, d.salida_crisp,
+                       d.pertenencia_velocidad, d.pertenencia_reincidencia,
+                       d.nivel_riesgo AS fuzzy_riesgo, d.dias_sancion_sugeridos AS fuzzy_dias
+                FROM eventos e
+                LEFT JOIN evento_vision_computadora vis ON vis.evento_id = e.id
+                LEFT JOIN evento_sistema_difuso d ON d.evento_id = e.id
                 WHERE e.id = %s
                 """,
                 (evento_id,),
             )
             ev = cur.fetchone()
-            if ev and ev.get("propietario_correo"):
-                placa = ev.get("placa_validada") or ev.get("placa_ocr")
-                asunto = f"Notificación de infracción de tránsito — Placa {placa}"
-                exceso = float(ev["velocidad"]) - float(ev["limite_velocidad"])
-                mensaje = (
-                    f"Estimado/a {ev.get('propietario_nombre', 'propietario')},\n\n"
-                    f"El sistema de monitoreo vehicular de la Universidad Técnica de Ambato registró\n"
-                    f"una infracción de tránsito para el vehículo con placa {placa}.\n\n"
-                    f"  • Velocidad registrada : {ev['velocidad']} km/h\n"
-                    f"  • Límite permitido     : {ev['limite_velocidad']} km/h\n"
-                    f"  • Exceso               : +{exceso:.1f} km/h\n"
-                    f"  • Sanción sugerida     : {ev['dias_sancion_sugeridos']} día(s) de suspensión\n\n"
-                    f"Por favor comuníquese con la administración del campus para regularizar su situación.\n\n"
-                    f"Universidad Técnica de Ambato — Sistema de Monitoreo Vehicular\n"
-                )
+            if ev:
+                from .config import get_settings
+                engineer_email = get_settings().engineer_email
+                placa  = ev.get("placa_validada") or ev.get("placa_ocr")
+                asunto = f"[Monitoreo UTA] Sanción aprobada — Placa {placa}"
+                from .mailer import build_detection_body
+                ocr_chars = (ev.get("vision_metadata") or {}).get("ocr_por_caracter", [])
+                data_correo = {
+                    **dict(ev),
+                    "vision": {
+                        "confianza_vehiculo": ev.get("confianza_vehiculo"),
+                        "confianza_placa":    ev.get("confianza_placa"),
+                        "caracteres_segmentados": ev.get("caracteres_segmentados"),
+                        "ocr_por_caracter":   ocr_chars,
+                    },
+                    "fuzzy": {
+                        "es_temeraria":           float(ev.get("velocidad", 0)) >= 50,
+                        "salida_crisp":           ev.get("salida_crisp"),
+                        "reglas_activadas":       ev.get("reglas_activadas") or [],
+                        "pertenencia_velocidad":  ev.get("pertenencia_velocidad") or {},
+                        "pertenencia_reincidencia": ev.get("pertenencia_reincidencia") or {},
+                        "nivel_riesgo":           ev.get("fuzzy_riesgo"),
+                        "dias_sancion_sugeridos": ev.get("fuzzy_dias"),
+                    },
+                }
+                mensaje = build_detection_body(data_correo)
                 if motivo:
                     mensaje += f"\nObservación del operador: {motivo}\n"
-
                 cur.execute(
                     """
                     INSERT INTO notificaciones (evento_id, correo_destino, tipo_notificacion, asunto, mensaje)
                     VALUES (%s, %s, 'infraccion', %s, %s)
                     """,
-                    (evento_id, ev["propietario_correo"], asunto, mensaje),
+                    (evento_id, engineer_email, asunto, mensaje),
                 )
         conn.commit()
 
@@ -359,13 +347,6 @@ def _row_to_payload(row: dict) -> dict[str, Any]:
         "imagen_placa": row["imagen_placa"],
         "fecha_hora": row["fecha_hora"].isoformat() if row.get("fecha_hora") else None,
         "observacion_admin": row.get("observacion_admin"),
-        "vehiculo": {
-            "marca": row.get("marca"),
-            "modelo": row.get("modelo"),
-            "color": row.get("color"),
-            "propietario_nombre": row.get("propietario_nombre"),
-            "propietario_correo": row.get("propietario_correo"),
-        },
         "vision": {
             "confianza_vehiculo": row.get("confianza_vehiculo"),
             "bbox_vehiculo": row.get("bbox_vehiculo"),

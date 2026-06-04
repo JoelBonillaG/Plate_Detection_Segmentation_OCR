@@ -47,11 +47,8 @@ try:
         insert_difuso,
         insert_evento,
         insert_vision,
-        lookup_vehiculo_id,
-        lookup_vehiculo_info,
     )
     from src.app.fuzzy import evaluar as fuzzy_evaluar, LIMITE_VELOCIDAD
-    from src.app.mailer import EmailPayload, send_email, build_congratulation_body
 
     REALTIME_ENABLED = True
     print("[REALTIME] Integracion con FastAPI activa.")
@@ -63,14 +60,7 @@ except ImportError:
     def insert_evento(**kw): return None
     def insert_vision(**kw): pass
     def insert_difuso(**kw): pass
-    def lookup_vehiculo_id(placa): return None
-    def lookup_vehiculo_info(vehiculo_id): return None
     def count_reincidencias(placa): return 0
-    def send_email(payload): pass
-    def build_congratulation_body(data): return ""
-
-    class EmailPayload:  # noqa: F811
-        def __init__(self, **kw): pass
 
     class _FallbackResult:
         tipo_evento = "normal"; nivel_riesgo = "bajo"; dias_sancion = 0
@@ -180,10 +170,6 @@ def hacer_al_capturar(modelos):
             "imagen_frame": ruta_frame,
             "imagen_placa": ruta_placa,
             "fecha_hora": datetime.datetime.now().isoformat(),
-            "vehiculo": {
-                "propietario_nombre": None,
-                "propietario_correo": None,
-            },
             "vision": {
                 "confianza_vehiculo": conf_v,
                 "bbox_vehiculo": bbox_v,
@@ -218,8 +204,11 @@ def hacer_al_capturar(modelos):
             },
         }
 
+        # Broadcast al frontend ANTES de persistir en DB — el usuario lo ve sin esperar las queries
+        broadcast_event(payload)
+        print(f"  [EVENTO] {evento_id_full}: placa={placa_str} vel={velocidad:.1f} km/h tipo={tipo_evento}")
+
         try:
-            vehiculo_id = lookup_vehiculo_id(placa_str)
             db_id = insert_evento(
                 placa_ocr=placa_str,
                 placa_validada=placa_str,
@@ -234,7 +223,6 @@ def hacer_al_capturar(modelos):
                 reincidencias=reincidencias,
                 imagen_frame=ruta_frame,
                 imagen_placa=ruta_placa,
-                vehiculo_id=vehiculo_id,
             )
             payload["db_id"] = db_id
 
@@ -267,31 +255,9 @@ def hacer_al_capturar(modelos):
                     reglas_activadas=payload["fuzzy"]["reglas_activadas"],
                 )
 
-                # Correo automático para conductores dentro del límite
-                if tipo_evento == "normal" and vehiculo_id:
-                    try:
-                        info = lookup_vehiculo_info(vehiculo_id)
-                        if info and info.get("propietario_correo"):
-                            cuerpo = build_congratulation_body({
-                                "propietario_nombre": info["propietario_nombre"],
-                                "placa": placa_str,
-                                "velocidad": velocidad,
-                                "limite_velocidad": LIMITE_VELOCIDAD,
-                            })
-                            send_email(EmailPayload(
-                                to=info["propietario_correo"],
-                                subject=f"Conducción responsable en campus UTA — Placa {placa_str}",
-                                body=cuerpo,
-                            ))
-                            print(f"  [EMAIL] Felicitación enviada a {info['propietario_correo']}")
-                    except Exception as mail_exc:
-                        print(f"  [EMAIL] Error al enviar felicitación: {mail_exc}")
-
         except Exception as exc:
             print(f"[DB] No se pudo persistir evento {evento_id_full}: {exc}")
 
-        broadcast_event(payload)
-        print(f"  [EVENTO] {evento_id_full}: placa={placa_str} vel={velocidad:.1f} km/h tipo={tipo_evento}")
         return texto
 
     return al_capturar

@@ -3,6 +3,8 @@ import csv
 from pathlib import Path
 from statistics import mean
 
+DATASET_DIR = Path(__file__).parent / "Dataset_OCR_Final"
+
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 DEFAULT_CLASSES = list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -141,22 +143,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Analiza el balance de clases de Dataset_OCR_Final."
     )
-    parser.add_argument(
-        "--dataset",
-        default="Dataset_OCR_Final",
-        help="Ruta del dataset OCR generado.",
-    )
-    parser.add_argument(
-        "--low-threshold",
-        type=int,
-        default=100,
-        help="Umbral para reportar clases con pocos ejemplos.",
-    )
-    parser.add_argument(
-        "--csv",
-        default="Dataset_OCR_Final/balance_report.csv",
-        help="Ruta opcional para guardar la tabla CSV.",
-    )
+    parser.add_argument("--dataset", default=str(DATASET_DIR))
+    parser.add_argument("--low-threshold", type=int, default=100)
+    parser.add_argument("--csv", default=str(DATASET_DIR / "balance_report.csv"))
     args = parser.parse_args()
 
     dataset_dir = Path(args.dataset)
