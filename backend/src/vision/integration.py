@@ -187,6 +187,7 @@ def hacer_al_capturar(modelos):
                     "pipeline": "cadena.py",
                     "captura": nombre,
                     "filtros": "activos" if resultado.uso_filtros else "omitidos",
+                    "enderezado": "activo" if resultado.uso_enderezado else "omitido",
                     "ocr_por_caracter": ocr_por_caracter,
                 },
             },

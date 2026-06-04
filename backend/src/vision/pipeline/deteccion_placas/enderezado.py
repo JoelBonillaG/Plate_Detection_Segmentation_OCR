@@ -7,6 +7,8 @@ lista para la red de OCR.
     c) si nada funciona, devuelve el recorte redimensionado
 """
 
+import math
+
 import cv2
 import numpy as np
 
@@ -34,11 +36,23 @@ def _ordenar_puntos(pts):
     ], dtype="float32")
 
 
-def _warp(img, pts):
+def _warp(img, pts, margen=0.10):
     """Perspectiva a horizontal SIN encoger: el tamano de salida sale de las
     longitudes REALES de los lados del cuadrilatero detectado -> conserva la
-    resolucion nativa de la placa (no se fuerza a un ancho x alto fijo)."""
+    resolucion nativa de la placa (no se fuerza a un ancho x alto fijo).
+
+    margen: expande el cuadrilatero hacia afuera (desde su centro) antes de
+    warpear -> deja un poco de contexto de la placa y NO recorta tan pegado
+    (evita el zoom excesivo que cortaba 'ECUADOR'). Se acota a los bordes del
+    crop para no muestrear fuera (sin cunas negras)."""
     src = _ordenar_puntos(pts)
+    if margen:
+        centro = src.mean(axis=0)
+        src = centro + (src - centro) * (1.0 + margen)
+        h, w = img.shape[:2]
+        src[:, 0] = src[:, 0].clip(0, w - 1)
+        src[:, 1] = src[:, 1].clip(0, h - 1)
+        src = src.astype("float32")
     tl, tr, br, bl = src
     ancho = int(round(max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))))
     alto  = int(round(max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))))
@@ -47,16 +61,38 @@ def _warp(img, pts):
     dst = np.array([[0, 0], [ancho - 1, 0],
                     [ancho - 1, alto - 1], [0, alto - 1]], dtype="float32")
     M = cv2.getPerspectiveTransform(src, dst)
-    return cv2.warpPerspective(img, M, (ancho, alto))
+    # INTER_CUBIC: el warp remuestrea TODOS los pixeles; cubico conserva mejor los
+    # bordes de los caracteres que el lineal por defecto (menos blur cuando si toca).
+    return cv2.warpPerspective(img, M, (ancho, alto), flags=cv2.INTER_CUBIC)
 
 
-def enderezar(crop, ancho=300, alto=100):
-    """Recibe el recorte de la placa y la devuelve HORIZONTAL conservando su
-    resolucion nativa. Solo corrige perspectiva/rotacion; NO infla con pixeles
-    sinteticos ni encoge a un tamano fijo (eso pixelaba).
+def _inclinacion(pts):
+    """(rotacion_grados, perspectiva_rel) del cuadrilatero ordenado.
+        rotacion    -> cuanto se inclina el borde sup/inf respecto a la horizontal.
+        perspectiva -> cuanto difiere la altura del lado izq vs der (trapecio), 0..1.
+    Sirve para decidir si vale la pena warpear o la placa ya esta casi de frente."""
+    tl, tr, br, bl = _ordenar_puntos(pts)
+    ang_sup = math.degrees(math.atan2(tr[1] - tl[1], tr[0] - tl[0]))
+    ang_inf = math.degrees(math.atan2(br[1] - bl[1], br[0] - bl[0]))
+    rot = max(abs(ang_sup), abs(ang_inf))
+    alto_izq = math.hypot(bl[0] - tl[0], bl[1] - tl[1])
+    alto_der = math.hypot(br[0] - tr[0], br[1] - tr[1])
+    persp = abs(alto_izq - alto_der) / max(1.0, alto_izq, alto_der)
+    return rot, persp
 
-    ancho/alto quedan en la firma por compatibilidad con las llamadas viejas,
-    pero ya NO se usan (el tamano lo decide la placa real)."""
+
+def enderezar(crop, ancho=300, alto=100, umbral_grados=5.0, umbral_persp=0.12,
+              margen=0.05):
+    """Devuelve la placa HORIZONTAL conservando su resolucion nativa, pero SOLO
+    warpea si de verdad esta torcida. Si ya esta casi de frente, devuelve el
+    recorte TAL CUAL -> NO se remuestrea, NO se pierde calidad (el warp siempre
+    suaviza). Asi se corrige lo que vale la pena sin degradar las placas frontales.
+
+        umbral_grados -> inclinacion (rotacion) maxima que se deja pasar sin warpear.
+        umbral_persp  -> trapecio (perspectiva) maximo que se deja pasar sin warpear.
+        margen        -> contexto extra alrededor de la placa cuando si se warpea.
+
+    ancho/alto quedan por compatibilidad con llamadas viejas; ya NO se usan."""
     area = crop.shape[0] * crop.shape[1]
 
     gris  = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
@@ -66,17 +102,25 @@ def enderezar(crop, ancho=300, alto=100):
     contornos, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contornos = sorted(contornos, key=cv2.contourArea, reverse=True)[:5]
 
-    # a) cuadrilatero -> perspectiva
+    def _frontal(pts):
+        rot, persp = _inclinacion(pts)
+        return rot <= umbral_grados and persp <= umbral_persp
+
+    # a) cuadrilatero -> perspectiva (solo si esta torcida)
     for c in contornos:
         peri   = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
         if len(approx) == 4 and cv2.contourArea(c) > 0.20 * area:
-            return _warp(crop, approx)
+            if _frontal(approx):
+                return crop          # ya frontal -> sin warp, maxima calidad
+            return _warp(crop, approx, margen)
 
-    # b) rectangulo rotado -> rotacion
+    # b) rectangulo rotado -> rotacion (solo si esta torcida)
     if contornos and cv2.contourArea(contornos[0]) > 0.20 * area:
         caja = cv2.boxPoints(cv2.minAreaRect(contornos[0]))
-        return _warp(crop, caja)
+        if _frontal(caja):
+            return crop
+        return _warp(crop, caja, margen)
 
     # c) sin contorno fiable -> crop tal cual (resolucion nativa, sin tocar)
     return crop

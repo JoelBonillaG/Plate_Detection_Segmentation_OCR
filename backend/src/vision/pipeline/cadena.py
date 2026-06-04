@@ -23,6 +23,10 @@ import deteccion_placas as etapa1
 import filtros as etapa_filtros
 import segmentacion as etapa2
 import ocr as etapa3
+# post-proceso (cero reentreno): filtro geometrico de cajas + formato de placa
+from segmentacion import postprocesamiento as seg_pp
+from ocr import postprocesamiento as ocr_pp
+from deteccion_placas import deskew_rotacion as deskew   # enderezado por ROTACION (Hough)
 
 
 @dataclass
@@ -39,15 +43,19 @@ class Modelos:
     modelo_carros: object       # ETAPA 0 (carros); None si no esta entrenado o desactivado
     usar_filtros: bool
     usar_carros: bool = True     # False -> se omite la ETAPA 0 (placa sobre frame completo)
+    usar_enderezado: bool = True # False -> la placa va al OCR SIN warp (recorte nativo directo)
 
 
-def cargar_modelos(usar_filtros=False, usar_carros=True):
+def cargar_modelos(usar_filtros=False, usar_carros=True, usar_enderezado=True):
     """
     Carga los modelos y sus configs una sola vez. Devuelve un Modelos.
 
     usar_carros=False -> NO se carga el detector de carros (ETAPA 0). La cadena
     trabaja la placa sobre el frame completo y el rastreo en vivo lo maneja la
     PLACA (ver camara.DETECTAR_CARROS y lineas.ZonaDeteccion rastrear_por).
+
+    usar_enderezado=False -> la placa va al OCR SIN warp de perspectiva (recorte
+    nativo directo): maxima calidad, pero no corrige placas torcidas.
     """
     cfg         = etapa1.cargar_config()
     modelo      = etapa1.cargar_modelo(cfg)
@@ -73,7 +81,8 @@ def cargar_modelos(usar_filtros=False, usar_carros=True):
     return Modelos(cfg=cfg, modelo=modelo, conf=conf, cfg_filtros=cfg_filtros,
                    modelo_seg=modelo_seg, modelo_ocr=modelo_ocr, classes_ocr=classes_ocr,
                    cfg_carros=cfg_carros, modelo_carros=modelo_carros,
-                   usar_filtros=usar_filtros, usar_carros=usar_carros)
+                   usar_filtros=usar_filtros, usar_carros=usar_carros,
+                   usar_enderezado=usar_enderezado)
 
 
 def procesar_frame(nombre, frame, m):
@@ -139,6 +148,7 @@ class ResultadoFrame:
     placa_bbox: object = None
     entrada_segmentacion: object = None
     uso_filtros: bool = False
+    uso_enderezado: bool = True         # False -> la placa fue al OCR sin warp (recorte nativo)
     placa_crop: object = None           # recorte CRUDO de la placa (antes de enderezar)
     seg_overlay: object = None          # entrada de segmentacion con las cajas dibujadas
     conf_vehiculo: float = None         # confianza YOLO del carro
@@ -173,8 +183,13 @@ def procesar_frame_detallado(nombre, frame, m):
         print(f"  [SIN PLACA] {nombre}")
         return None
     placa_crop = etapa1.recortar(base, bbox, m.cfg.get("margen", 0.08))   # crudo
-    placa = etapa1.enderezar(placa_crop, m.cfg.get("ancho_placa", 300),
-                             m.cfg.get("alto_placa", 100))                 # horizontal
+    # ETAPA 1c: enderezar por ROTACION (deskew Hough) SOLO si el flag esta activo.
+    # Robusto (no caza esquinas) y solo rota si esta torcida; si ya esta derecha o
+    # el flag esta off -> recorte nativo directo (sin remuestreo -> maxima calidad).
+    if m.usar_enderezado:
+        placa = deskew.enderezar_rotacion(placa_crop)
+    else:
+        placa = placa_crop
     etapa1.guardar_deteccion(nombre, base, bbox, m.cfg)
     etapa1.guardar_enderezada(nombre, placa, m.cfg)
 
@@ -187,6 +202,10 @@ def procesar_frame_detallado(nombre, frame, m):
 
     # ETAPA 2: segmentar caracteres -> crops (+ cajas para visualizar).
     cajas, crops = etapa2.segmentar(entrada_seg, m.modelo_seg)
+    # POST-PROCESO: filtro geometrico -> bota guion '-', tornillos y restos (forma,
+    # no confianza). Se aplica antes de guardar/dibujar para que el overlay y los
+    # crops del OCR salgan limpios.
+    cajas, crops = seg_pp.filtrar_ruido(cajas, crops)
     etapa2.guardar(nombre, crops)
 
     # visualizacion de la segmentacion: entrada_seg con las cajas de caracteres
@@ -194,10 +213,16 @@ def procesar_frame_detallado(nombre, frame, m):
     if seg_overlay.ndim == 2:
         seg_overlay = cv2.cvtColor(seg_overlay, cv2.COLOR_GRAY2BGR)
     for (sx1, sy1, sx2, sy2) in cajas:
-        cv2.rectangle(seg_overlay, (sx1, sy1), (sx2, sy2), (0, 255, 0), 2)
+        # caja encogida ~8% y linea fina (1px) SOLO para visualizar: se ve menos
+        # saturada. NO afecta los crops del OCR (esos usan `cajas` sin tocar).
+        dx = int((sx2 - sx1) * 0.08)
+        dy = int((sy2 - sy1) * 0.08)
+        cv2.rectangle(seg_overlay, (sx1 + dx, sy1 + dy), (sx2 - dx, sy2 - dy), (0, 255, 0), 1)
 
-    # ETAPA 3: OCR -> texto + confianza por caracter.
-    texto, confs = etapa3.clasificar(crops, m.modelo_ocr, m.classes_ocr, return_conf=True)
+    # ETAPA 3: OCR con FORMATO de placa forzado (3 letras + 4/3 digitos): elige la
+    # mejor subsecuencia y descarta cajas sobrantes -> evita salidas tipo
+    # 'IHB124514689'. Reemplaza a clasificar() (mismo modelo, + seleccion).
+    texto, confs = ocr_pp.leer_placa(crops, m.modelo_ocr, m.classes_ocr, return_conf=True)
     etapa3.guardar_resultado(nombre, texto)
     conf_ocr = (sum(confs) / len(confs)) if confs else 0.0
     ocr_por_caracter = list(zip(texto, confs))
@@ -210,6 +235,7 @@ def procesar_frame_detallado(nombre, frame, m):
         placa_bbox=bbox,
         entrada_segmentacion=entrada_seg,
         uso_filtros=m.usar_filtros,
+        uso_enderezado=m.usar_enderezado,
         placa_crop=placa_crop,
         seg_overlay=seg_overlay,
         conf_vehiculo=conf_v,

@@ -94,7 +94,8 @@ class ZonaDeteccion:
         self._estado        = "esperando"   # esperando | rastreando
         self._mejor_frame   = None
         self._mejor_nitidez = 0.0
-        self._mejor_ancho   = 0       # ancho de placa (px) en el mejor frame
+        self._mejor_ancho   = 0       # ancho de placa (px) en el mejor frame (0 si respaldo)
+        self._mejor_tam     = 0       # ancho del objeto rastreado (placa o carro): cercania
         self._mejor_tiene_placa = False  # ¿el mejor frame tenia placa? (vs respaldo de carro)
         self._frame_entra   = None    # primer frame al entrar a la zona
         self._frame_sale    = None    # frame al cruzar la linea SALE
@@ -205,14 +206,18 @@ class ZonaDeteccion:
 
     def _evaluar(self, frame, placa_bbox, carro_bbox, frame_captura=None):
         """
-        Elige el mejor frame del cruce para el OCR.
-        Prioridad: un frame CON placa (suficientemente grande) le gana a cualquiera
-        sin placa; entre frames del mismo tipo, gana el mas nitido. Si la placa
-        nunca aparece, queda como respaldo el frame de CARRO mas nitido (asi igual
-        hay 'mejor' y velocidad, aunque el OCR quiza no lea).
+        Elige el mejor frame del cruce para el OCR por CERCANIA (no por nitidez).
+        Criterio: el objeto mas ANCHO = el mas cerca de la camara = mas pixeles
+        reales en la placa. Asi se evita quedarse con una toma lejana aunque sea
+        nitida (lejos la placa es ilegible para el OCR).
 
-        La nitidez y los bbox se miden sobre `frame` (display); lo que se GUARDA
-        como mejor es `frame_captura` (resolucion nativa para el OCR).
+            - un frame CON placa SIEMPRE supera al respaldo sin placa.
+            - dos CON placa: gana la placa mas ANCHA (mas cerca). Empate -> mas nitido.
+            - dos SIN placa (respaldo de carro): gana el CARRO mas ANCHO (mas cerca).
+              Empate -> mas nitido. (Antes ganaba el mas nitido, que solia ser lejano.)
+
+        La nitidez/ancho se miden sobre `frame` (display); lo que se GUARDA como
+        mejor es `frame_captura` (resolucion nativa para el OCR).
         """
         if frame_captura is None:
             frame_captura = frame
@@ -220,37 +225,34 @@ class ZonaDeteccion:
         if placa_ok:
             x1, y1, x2, y2 = placa_bbox
             tiene, ancho = True, x2 - x1
+            tam = ancho                      # cercania medida con el ancho de la PLACA
         elif carro_bbox is not None:
-            x1, y1, x2, y2 = carro_bbox      # respaldo: nitidez del carro
-            tiene, ancho = False, 0
+            x1, y1, x2, y2 = carro_bbox      # respaldo: el CARRO
+            tiene, ancho = False, 0          # ancho_px reportado = 0 (no hubo placa)
+            tam = x2 - x1                    # cercania medida con el ancho del CARRO
         elif placa_bbox is not None:
             # modo placa sin carro: la placa es chica pero igual es lo unico que hay
             x1, y1, x2, y2 = placa_bbox
             tiene, ancho = False, placa_bbox[2] - placa_bbox[0]
+            tam = ancho
         else:
             return                           # nada que evaluar este frame
         crop = frame[max(y1, 0):y2, max(x1, 0):x2]
         n = _nitidez(crop)
 
-        # criterio:
-        #   - un frame CON placa SIEMPRE supera al respaldo sin placa.
-        #   - entre dos CON placa: gana el MAS CERCANO (placa mas ancha = carro mas
-        #     cerca de la camara = mas pixeles reales para el OCR). Empate de ancho
-        #     -> el mas nitido. Asi NO se queda con una toma lejana aunque sea nitida.
-        #   - entre dos SIN placa (respaldo de carro): gana el mas nitido.
         if tiene and not self._mejor_tiene_placa:
             gana = True                       # primer frame con placa pisa al respaldo
-        elif tiene and self._mejor_tiene_placa:
-            gana = (ancho > self._mejor_ancho) or \
-                   (ancho == self._mejor_ancho and n > self._mejor_nitidez)
-        elif not tiene and not self._mejor_tiene_placa:
-            gana = n > self._mejor_nitidez    # respaldo: mas nitido
+        elif tiene == self._mejor_tiene_placa:
+            # mismo tipo (ambos con placa o ambos respaldo): gana el MAS ANCHO (cerca)
+            gana = (tam > self._mejor_tam) or \
+                   (tam == self._mejor_tam and n > self._mejor_nitidez)
         else:
             gana = False                      # ya hay con placa: no degradar a respaldo
         if gana:
             self._mejor_nitidez     = n
             self._mejor_frame       = frame_captura.copy()
             self._mejor_ancho       = ancho
+            self._mejor_tam         = tam
             self._mejor_tiene_placa = tiene
 
     def _cerrar(self, frame, t=None):
@@ -298,6 +300,7 @@ class ZonaDeteccion:
         self._mejor_frame   = None
         self._mejor_nitidez = 0.0
         self._mejor_ancho   = 0
+        self._mejor_tam     = 0
         self._mejor_tiene_placa = False
         self._frame_entra   = None
         self._frame_sale    = None
