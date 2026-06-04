@@ -743,10 +743,12 @@ function ResumenTab({ event }) {
             </div>
 
             <div className="card">
-              <div className="card-header"><div className="card-header-left"><Car size={16} /><h2>Vehículo</h2></div></div>
+              <div className="card-header"><div className="card-header-left"><Car size={16} /><h2>Detección</h2></div></div>
               <dl className="info-list">
                 {[
-                  { label: "Reincidencias", val: `${event.recurrenceCount} previas` },
+                  { label: "Placa OCR",      val: event.plateOcr },
+                  { label: "Placa validada", val: event.plateValidated },
+                  { label: "Reincidencias",  val: `${event.recurrenceCount} previas` },
                 ].map(({ label, val }) => (
                   <div key={label} className="info-row">
                     <dt>{label}</dt><dd>{val ?? "—"}</dd>

@@ -33,7 +33,7 @@ from .database import (
     mark_notification_error,
     mark_notification_sent,
 )
-from .mailer import EmailPayload, build_vehicle_notification_body, send_email
+from .mailer import EmailPayload, send_email
 from .realtime import get_current_frame, set_current_frame, manager, video_manager
 from .events_db import fetch_eventos, fetch_evento, _row_to_payload, approve_evento, reject_evento
 from .fuzzy import EXCESO, REINCI, SEVERIDAD, RULES, LIMITE_VELOCIDAD as FZ_LIMITE, UMBRAL_TEMERARIA as FZ_UMBRAL
@@ -192,12 +192,7 @@ class ReviewRequest(BaseModel):
 
 @app.patch("/api/events/{evento_id}/approve")
 def approve_event(evento_id: str, body: ReviewRequest) -> dict:
-    """
-    Aprueba la sancion:
-    1. Actualiza estado_revision -> aprobado
-    2. Crea notificacion (si hay correo del propietario)
-    3. Envia el correo inmediatamente
-    """
+    """Aprueba la sancion, crea notificacion y envia correo al ingeniero."""
     try:
         approve_evento(evento_id, body.placa_corregida, body.motivo)
     except Exception as exc:
@@ -208,7 +203,7 @@ def approve_event(evento_id: str, body: ReviewRequest) -> dict:
         notifs = fetch_pending_notifications(limit=1)
         notifs = [n for n in notifs if str(n.get("evento_id")) == evento_id]
         for n in notifs:
-            body_text = n.get("mensaje") or build_vehicle_notification_body(n)
+            body_text = n.get("mensaje", "")
             try:
                 send_email(EmailPayload(to=n["correo_destino"], subject=n["asunto"], body=body_text))
                 mark_notification_sent(str(n["id"]))
@@ -332,7 +327,7 @@ def send_test_email(payload: TestEmailRequest) -> dict:
 def send_pending_notifications(limit: int = 10) -> dict:
     sent = failed = 0
     for n in fetch_pending_notifications(limit=limit):
-        body = n.get("mensaje") or build_vehicle_notification_body(n)
+        body = n.get("mensaje", "")
         try:
             send_email(EmailPayload(to=n["correo_destino"], subject=n["asunto"], body=body))
             mark_notification_sent(str(n["id"]))
