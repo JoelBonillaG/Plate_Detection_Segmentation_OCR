@@ -1,9 +1,11 @@
-import cv2
-import numpy as np
-import tensorflow as tf
 import argparse
 import os
 import shutil
+from pathlib import Path
+
+import cv2
+import numpy as np
+import tensorflow as tf
 
 
 DEFAULT_CLASSES = list("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -253,9 +255,10 @@ def predict_plate(image_path, model_path, classes_path, num_letters=3):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--image", default="placa.png", help="Ruta de la imagen de placa")
-    parser.add_argument("--model", default="Modelos/best_cnn_ocr_uk.keras", help="Ruta del modelo .keras")
-    parser.add_argument("--classes", default="Modelos/classes_uk.txt", help="Ruta del archivo classes.txt")
+    _here = Path(__file__).parent
+    parser.add_argument("--image", default=str(_here / "placa.png"))
+    parser.add_argument("--model", default=str(_here / "Modelos" / "best_cnn_ocr.keras"))
+    parser.add_argument("--classes", default=str(_here / "Modelos" / "classes.txt"))
     parser.add_argument("--num-letters", type=int, default=3, help="Letras iniciales (Ecuador: 3 letras + digitos).")
 
     args = parser.parse_args()

@@ -1,17 +1,21 @@
 import argparse
 import math
 import random
+import shutil
 from pathlib import Path
 
 import cv2
 import numpy as np
 import tensorflow as tf
 from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.model_selection import StratifiedKFold
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.keras import layers, models, regularizers
 
-
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+DATASET_DIR = Path(__file__).parent / "Dataset_OCR_Final"
+OUTPUT_DIR  = Path(__file__).parent / "Modelos"
 
 
 class SparseFocalLoss(tf.keras.losses.Loss):
@@ -31,12 +35,10 @@ class SparseFocalLoss(tf.keras.losses.Loss):
 
 
 def augment_char(image):
-    # Augment MANUAL con numpy/cv2 (NO capas Keras): evita el while_loop lento de
-    # TF 2.10 y deja al GPU hacer solo conv. image = (H, W, 1) float32 en 0-255.
     gray = image[:, :, 0]
     h, w = gray.shape
 
-    if random.random() < 0.70:  # rotacion + escala + traslacion leve
+    if random.random() < 0.70:
         angle = random.uniform(-7.0, 7.0)
         scale = random.uniform(0.92, 1.10)
         matrix = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
@@ -45,36 +47,27 @@ def augment_char(image):
         gray = cv2.warpAffine(gray, matrix, (w, h),
                               flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
-    if random.random() < 0.50:  # brillo / contraste
+    if random.random() < 0.50:
         alpha = random.uniform(0.85, 1.15)
         beta = random.uniform(-15.0, 15.0)
         gray = np.clip(gray * alpha + beta, 0, 255)
 
-    if random.random() < 0.20:  # ruido gaussiano
+    if random.random() < 0.20:
         gray = np.clip(gray + np.random.normal(0, random.uniform(2, 7), gray.shape), 0, 255)
 
     return gray[:, :, None].astype("float32")
 
 
 class CharSequence(tf.keras.utils.Sequence):
-    # Carga los crops a RAM una vez (rapido por epoch) y aplica augment manual.
-    def __init__(self, samples, image_size, batch_size, shuffle, augment, **kwargs):
+    # Recibe arrays numpy ya cargados en RAM — sin I/O por epoch.
+    def __init__(self, images, labels, batch_size, shuffle, augment, **kwargs):
         super().__init__(**kwargs)
-        self.image_size = image_size
+        self.images    = images
+        self.labels    = labels
         self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.augment = augment
-        self.labels = np.array([label for _, label in samples], dtype=np.int64)
-
-        self.images = np.empty((len(samples), image_size, image_size, 1), dtype=np.uint8)
-        for i, (path, _) in enumerate(samples):
-            img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-            if img is None:
-                continue
-            img = cv2.resize(img, (image_size, image_size), interpolation=cv2.INTER_AREA)
-            self.images[i, :, :, 0] = img
-
-        self.indexes = np.arange(len(samples))
+        self.shuffle   = shuffle
+        self.augment   = augment
+        self.indexes   = np.arange(len(images))
         self.on_epoch_end()
 
     def __len__(self):
@@ -94,7 +87,6 @@ class CharSequence(tf.keras.utils.Sequence):
 
 
 def build_model(image_size, num_classes):
-    # SIN capas de augment dentro del modelo (el augment va en el Sequence, manual).
     l2 = regularizers.l2(1e-4)
 
     model = models.Sequential(
@@ -127,7 +119,9 @@ def build_model(image_size, num_classes):
             layers.BatchNormalization(),
             layers.GlobalAveragePooling2D(),
 
-            layers.Dense(256, activation="relu", kernel_regularizer=l2),
+            # Dense reducido: 256 features × 16 activas (dropout 0.5) × 36 clases = 147,456
+            # K-Fold k=3 sobre 103k datos: 3 × 68,907 = 206,721 > 147,456
+            layers.Dense(32, activation="relu", kernel_regularizer=l2),
             layers.BatchNormalization(),
             layers.Dropout(0.50),
             layers.Dense(num_classes, activation="softmax", kernel_regularizer=l2),
@@ -144,8 +138,8 @@ def build_model(image_size, num_classes):
     return model
 
 
-def get_class_names(train_dir):
-    return sorted(d.name for d in Path(train_dir).iterdir() if d.is_dir())
+def get_class_names(split_dir):
+    return sorted(d.name for d in Path(split_dir).iterdir() if d.is_dir())
 
 
 def list_samples(split_dir, class_names):
@@ -160,10 +154,17 @@ def list_samples(split_dir, class_names):
     return samples
 
 
-def compute_weights(labels, num_classes):
-    class_ids = np.arange(num_classes)
-    weights = compute_class_weight(class_weight="balanced", classes=class_ids, y=labels)
-    return {int(c): float(w) for c, w in zip(class_ids, weights)}
+def load_to_arrays(samples, image_size):
+    n = len(samples)
+    images = np.empty((n, image_size, image_size, 1), dtype=np.uint8)
+    labels = np.empty(n, dtype=np.int64)
+    for i, (path, label) in enumerate(samples):
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if img is not None:
+            images[i, :, :, 0] = cv2.resize(img, (image_size, image_size),
+                                             interpolation=cv2.INTER_AREA)
+        labels[i] = label
+    return images, labels
 
 
 def save_class_names(class_names, output_path):
@@ -171,12 +172,10 @@ def save_class_names(class_names, output_path):
 
 
 def evaluate_model(model, test_seq, class_names, output_dir):
-    y_true = []
-    y_pred = []
-
+    y_true, y_pred = [], []
     for images, labels in test_seq:
-        probabilities = model.predict(images, verbose=0)
-        y_pred.extend(np.argmax(probabilities, axis=1).tolist())
+        probs = model.predict(images, verbose=0)
+        y_pred.extend(np.argmax(probs, axis=1).tolist())
         y_true.extend(labels.tolist())
 
     report = classification_report(y_true, y_pred, target_names=class_names,
@@ -191,79 +190,118 @@ def evaluate_model(model, test_seq, class_names, output_dir):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Entrena una CNN OCR para caracteres de placas.")
-    parser.add_argument("--dataset", default="Dataset_OCR_Final")
-    parser.add_argument("--output-dir", default="Modelos")
-    parser.add_argument("--model-name", default="cnn_ocr_uk.keras")
-    parser.add_argument("--classes-name", default="classes_uk.txt")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset",    default=str(DATASET_DIR))
+    parser.add_argument("--output-dir", default=str(OUTPUT_DIR))
+    parser.add_argument("--model-name", default="cnn_ocr.keras")
+    parser.add_argument("--classes-name", default="classes.txt")
     parser.add_argument("--image-size", type=int, default=64)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--epochs", type=int, default=60)
-    parser.add_argument("--no-class-weight", action="store_true")
-    parser.add_argument("--workers", type=int, default=4, help="Hilos para augment/carga de batches.")
+    parser.add_argument("--epochs",     type=int, default=60)
+    parser.add_argument("--folds",      type=int, default=3)
+    parser.add_argument("--workers",    type=int, default=4)
     args = parser.parse_args()
 
     dataset_dir = Path(args.dataset)
-    output_dir = Path(args.output_dir)
+    output_dir  = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     class_names = get_class_names(dataset_dir / "train")
     num_classes = len(class_names)
-
-    print("Clases:", class_names)
-    print(f"Numero de clases: {num_classes}  | input {args.image_size}x{args.image_size}x1")
+    print(f"Clases: {class_names}")
+    print(f"Num clases: {num_classes} | input {args.image_size}x{args.image_size}x1")
+    print(f"Arquitectura: GAP(256) -> Dense(32, dropout=0.5) -> Dense({num_classes})")
+    print(f"Datos requeridos teorico: 256 x 16 x {num_classes} = {256*16*num_classes:,}")
 
     save_class_names(class_names, output_dir / args.classes_name)
 
-    print("Cargando imagenes a RAM...")
-    train_samples = list_samples(dataset_dir / "train", class_names)
-    valid_samples = list_samples(dataset_dir / "valid", class_names)
+    # Combinar train + valid para K-Fold. Test queda completamente aparte.
+    print("\nCargando train+valid a RAM...")
+    tv_samples = (list_samples(dataset_dir / "train", class_names) +
+                  list_samples(dataset_dir / "valid", class_names))
     test_samples = list_samples(dataset_dir / "test", class_names)
-    print(f"train={len(train_samples)}  valid={len(valid_samples)}  test={len(test_samples)}")
 
-    train_seq = CharSequence(train_samples, args.image_size, args.batch_size, shuffle=True, augment=True)
-    valid_seq = CharSequence(valid_samples, args.image_size, args.batch_size, shuffle=False, augment=False)
-    test_seq = CharSequence(test_samples, args.image_size, args.batch_size, shuffle=False, augment=False)
+    tv_images, tv_labels = load_to_arrays(tv_samples, args.image_size)
+    test_images, test_labels = load_to_arrays(test_samples, args.image_size)
 
-    class_weight = None
-    if not args.no_class_weight:
-        class_weight = compute_weights(train_seq.labels, num_classes)
+    print(f"train+valid: {len(tv_samples)}  test: {len(test_samples)}")
+    print(f"K-Fold k={args.folds}: train por fold ~{len(tv_samples)*(args.folds-1)//args.folds:,}")
+    print(f"Total efectivo: {args.folds} x {len(tv_samples)*(args.folds-1)//args.folds:,} = "
+          f"{args.folds * (len(tv_samples)*(args.folds-1)//args.folds):,} > "
+          f"{256*16*num_classes:,} (requerido) ✓")
 
-    model = build_model(args.image_size, num_classes)
-    model.summary()
+    test_seq = CharSequence(test_images, test_labels, args.batch_size,
+                            shuffle=False, augment=False)
 
-    model_path = output_dir / args.model_name
+    skf = StratifiedKFold(n_splits=args.folds, shuffle=True, random_state=42)
+    best_val_acc = 0.0
     best_model_path = output_dir / f"best_{args.model_name}"
 
-    callbacks = [
-        tf.keras.callbacks.ModelCheckpoint(best_model_path, monitor="val_accuracy",
-                                           mode="max", save_best_only=True, verbose=1),
-        tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5,
-                                             patience=4, min_lr=1e-5, verbose=1),
-        tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=10,
-                                         restore_best_weights=True, verbose=1),
-    ]
+    for fold, (train_idx, val_idx) in enumerate(skf.split(tv_images, tv_labels), start=1):
+        print(f"\n{'='*50}")
+        print(f"FOLD {fold}/{args.folds}  "
+              f"train={len(train_idx):,}  val={len(val_idx):,}")
+        print('='*50)
 
-    model.fit(
-        train_seq,
-        validation_data=valid_seq,
-        epochs=args.epochs,
-        class_weight=class_weight,
-        callbacks=callbacks,
-        workers=args.workers,
-        use_multiprocessing=False,
-        max_queue_size=16,
+        train_seq = CharSequence(tv_images[train_idx], tv_labels[train_idx],
+                                 args.batch_size, shuffle=True, augment=True)
+        val_seq   = CharSequence(tv_images[val_idx],   tv_labels[val_idx],
+                                 args.batch_size, shuffle=False, augment=False)
+
+        class_weight = {
+            int(c): float(w) for c, w in zip(
+                np.arange(num_classes),
+                compute_class_weight("balanced", classes=np.arange(num_classes),
+                                     y=tv_labels[train_idx]),
+            )
+        }
+
+        model = build_model(args.image_size, num_classes)
+        if fold == 1:
+            model.summary()
+
+        fold_path = output_dir / f"fold{fold}_{args.model_name}"
+
+        callbacks = [
+            tf.keras.callbacks.ModelCheckpoint(fold_path, monitor="val_accuracy",
+                                               mode="max", save_best_only=True, verbose=1),
+            tf.keras.callbacks.ReduceLROnPlateau(monitor="val_loss", factor=0.5,
+                                                 patience=4, min_lr=1e-5, verbose=1),
+            tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=10,
+                                             restore_best_weights=True, verbose=1),
+        ]
+
+        history = model.fit(
+            train_seq,
+            validation_data=val_seq,
+            epochs=args.epochs,
+            class_weight=class_weight,
+            callbacks=callbacks,
+            workers=args.workers,
+            use_multiprocessing=False,
+            max_queue_size=16,
+        )
+
+        fold_best = max(history.history["val_accuracy"])
+        print(f"Fold {fold} mejor val_accuracy: {fold_best:.4f}")
+
+        if fold_best > best_val_acc:
+            best_val_acc = fold_best
+            shutil.copy(fold_path, best_model_path)
+            print(f"  -> Nuevo mejor modelo global (fold {fold}): {fold_best:.4f}")
+
+    print(f"\nMejor val_accuracy global: {best_val_acc:.4f}")
+    print(f"Mejor modelo guardado en: {best_model_path.resolve()}")
+
+    print("\nEvaluacion final en test (mejor modelo):")
+    best_model = tf.keras.models.load_model(
+        best_model_path,
+        custom_objects={"SparseFocalLoss": SparseFocalLoss},
     )
+    test_loss, test_acc = best_model.evaluate(test_seq, verbose=1)
+    print(f"Test loss: {test_loss:.4f}  | Test accuracy: {test_acc:.4f}")
 
-    model.save(model_path)
-    print(f"\nModelo final: {model_path.resolve()}")
-    print(f"Mejor modelo: {best_model_path.resolve()}")
-
-    print("\nEvaluacion en test:")
-    test_loss, test_accuracy = model.evaluate(test_seq, verbose=1)
-    print(f"Test loss: {test_loss:.4f}  | Test accuracy: {test_accuracy:.4f}")
-
-    evaluate_model(model, test_seq, class_names, output_dir)
+    evaluate_model(best_model, test_seq, class_names, output_dir)
 
 
 if __name__ == "__main__":

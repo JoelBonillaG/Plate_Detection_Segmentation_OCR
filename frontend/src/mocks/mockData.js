@@ -30,13 +30,7 @@ export const events = [
     ocrConfidence: 0.94,
     recurrenceCount: 2,
     dateTime: "2026-05-30 11:42:10",
-    vehicle: {
-      brand: "Renault",
-      model: "Logan",
-      color: "Gris",
-      ownerName: "Carlos Andrade",
-      ownerEmail: "c.andrade@uni.edu",
-    },
+    vehicle: {},
     images: {
       frame: "/mock/principal.png",
       plate: "/mock/placa_sola.png",
@@ -85,10 +79,7 @@ export const events = [
     ocrConfidence: 0.91,
     recurrenceCount: 0,
     dateTime: "2026-05-30 11:41:33",
-    vehicle: {
-      brand: "Chevrolet", model: "Sail", color: "Blanco",
-      ownerName: "Maria Solis", ownerEmail: "m.solis@uni.edu",
-    },
+    vehicle: {},
     images: { frame: "/mock/principal.png", plate: "/mock/placa_sola.png" },
     computerVision: {
       vehicleDetection: { label: "Vehiculo", confidence: 0.96, bbox: "x:198, y:92, w:584, h:330" },
@@ -131,10 +122,7 @@ export const events = [
     ocrConfidence: 0.89,
     recurrenceCount: 1,
     dateTime: "2026-05-30 11:41:02",
-    vehicle: {
-      brand: "Kia", model: "Rio", color: "Azul",
-      ownerName: "Jose Vera", ownerEmail: "j.vera@uni.edu",
-    },
+    vehicle: {},
     images: { frame: "/mock/principal.png", plate: "/mock/placa_sola.png" },
     computerVision: {
       vehicleDetection: { label: "Vehiculo", confidence: 0.95, bbox: "x:180, y:90, w:600, h:344" },
@@ -180,10 +168,7 @@ export const events = [
     ocrConfidence: 0.96,
     recurrenceCount: 4,
     dateTime: "2026-05-30 11:40:41",
-    vehicle: {
-      brand: "Toyota", model: "Yaris", color: "Negro",
-      ownerName: "Ana Mora", ownerEmail: "a.mora@uni.edu",
-    },
+    vehicle: {},
     images: { frame: "/mock/principal.png", plate: "/mock/placa_sola.png" },
     computerVision: {
       vehicleDetection: { label: "Vehiculo", confidence: 0.98, bbox: "x:175, y:82, w:620, h:350" },

@@ -578,7 +578,7 @@ function EventHeroStrip({ event }) {
           </div>
           <div className="hero-evt-id">{event.id}</div>
           <div className="hero-subtitle">
-            {event.vehicle?.brand} {event.vehicle?.model} · {event.vehicle?.ownerName} · {event.dateTime}
+            {event.dateTime}
           </div>
         </div>
         <div className="hero-status-block">
@@ -637,7 +637,7 @@ function HumanReviewBox({ event }) {
       setStatus("ok");
       if (action === "approve") {
         setMsg(data.email_sent > 0
-          ? `Sanción aprobada. Correo enviado a ${event.vehicle?.ownerEmail}.`
+          ? `Sanción aprobada. Correo enviado al ingeniero.`
           : "Sanción aprobada. Correo en cola (verificar SMTP en .env)."
         );
       } else {
@@ -746,11 +746,6 @@ function ResumenTab({ event }) {
               <div className="card-header"><div className="card-header-left"><Car size={16} /><h2>Vehículo</h2></div></div>
               <dl className="info-list">
                 {[
-                  { label: "Propietario",   val: event.vehicle?.ownerName },
-                  { label: "Correo",        val: event.vehicle?.ownerEmail },
-                  { label: "Marca",         val: event.vehicle?.brand },
-                  { label: "Modelo",        val: event.vehicle?.model },
-                  { label: "Color",         val: event.vehicle?.color },
                   { label: "Reincidencias", val: `${event.recurrenceCount} previas` },
                 ].map(({ label, val }) => (
                   <div key={label} className="info-row">
@@ -1406,17 +1401,15 @@ function NotificationsView() {
     .map(e => ({
       id: e.id,
       type: e.type === "normal" ? "felicitacion" : "infraccion",
-      recipient: e.vehicle?.ownerEmail ?? "—",
-      subject: e.type === "normal"
-        ? "Conducción responsable en campus UTA"
-        : `Infracción de tránsito detectada — ${e.plateValidated}`,
+      recipient: "Ingeniero responsable",
+      subject: `Sanción aprobada — Placa ${e.plateValidated}`,
       status: e.notificationStatus,
     }));
 
   return (
     <div className="view-stack">
       <div><h1 style={{ fontSize: "1.75rem" }}>Notificaciones</h1>
-        <p style={{ color: "var(--muted)", fontSize: ".9rem", marginTop: 5 }}>Correos enviados o pendientes para propietarios.</p>
+        <p style={{ color: "var(--muted)", fontSize: ".9rem", marginTop: 5 }}>Correos enviados al ingeniero responsable del sistema.</p>
       </div>
       <div className="notif-grid">
         {notifs.map(n => (
@@ -1436,9 +1429,7 @@ function NotificationsView() {
               <div className="notif-email-row"><dt>Para:</dt><dd>{n.recipient}</dd></div>
               <div className="notif-email-row"><dt>Asunto:</dt><dd>{n.subject}</dd></div>
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
-                {n.type === "felicitacion"
-                  ? "Estimado propietario, su vehículo fue detectado cumpliendo las normas de tránsito del campus UTA. ¡Gracias por su conducción responsable!"
-                  : "Estimado propietario, se ha registrado una infracción de tránsito en el campus universitario. Por favor comuníquese con la administración."}
+                {"Resultado del sistema de monitoreo vehicular UTA. Ver detalles en el dashboard."}
               </div>
             </div>
           </div>
