@@ -504,19 +504,26 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     on_frame / on_fps son los UNICOS puentes con el backend. Si no se pasan, esta
     camara es 100% standalone: no sabe nada de web ni de base de datos.
     """
-    es_archivo = isinstance(fuente, str) and "://" not in fuente
+    # "idle" = fuente DETENIDA desde el frontend (boton Detener): el proceso sigue
+    # vivo pero suelta la camara y no procesa nada hasta que se elija otra fuente.
+    en_idle = (fuente == "idle")
+    es_archivo = (not en_idle) and isinstance(fuente, str) and "://" not in fuente
 
-    fuente_video = FuenteVideo(fuente, es_archivo)
-    if not fuente_video.abierta():
-        print(f"No se pudo abrir la fuente: {fuente}")
-        return
+    fuente_video = None
+    if not en_idle:
+        fuente_video = FuenteVideo(fuente, es_archivo)
+        if not fuente_video.abierta():
+            print(f"No se pudo abrir la fuente: {fuente}")
+            return
 
     os.makedirs(carpeta_captura, exist_ok=True)
 
     # FPS de la fuente (para convertir frames -> segundos en video grabado)
-    fps = fuente_video.get_fps()
-    if not fps or fps <= 0:
-        fps = FPS_FALLBACK
+    fps = FPS_FALLBACK
+    if fuente_video is not None:
+        fps = fuente_video.get_fps()
+        if not fps or fps <= 0:
+            fps = FPS_FALLBACK
 
     rastrear_por = "carro" if DETECTAR_CARROS else "placa"
     tolerancia   = TOLERANCIA_CARRO if DETECTAR_CARROS else TOLERANCIA_PLACA
@@ -565,20 +572,34 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     fuente_actual = fuente
     _rt = _leer_fuente_runtime()
     source_version = _rt[1] if _rt else 0    # arranca sincronizado: no swap inmediato
-    source_type = "video" if es_archivo else "live"
-    source_name = os.path.basename(str(fuente_actual)) if es_archivo else "EN VIVO"
+    if en_idle:
+        source_type, source_name = "idle", "DETENIDO"
+    elif es_archivo:
+        source_type, source_name = "video", os.path.basename(str(fuente_actual))
+    else:
+        source_type, source_name = "live", "EN VIVO"
     print(f"[FUENTE] hot-swap ACTIVO. Inicial: {source_name} (v{source_version}). "
           f"Cambialo desde el frontend ('Elegir video' / 'EN VIVO').")
 
     while True:
-        # ── hot-swap: si la API pidio otra fuente, reabrir sin reiniciar (cada ~15 frames) ──
-        if n_frame % 15 == 0:
+        # ── hot-swap / DETENER: aplicar el cambio de fuente sin reiniciar el proceso.
+        #    En idle se revisa cada iteracion (n_frame no avanza); con fuente activa,
+        #    cada ~15 frames. fuente="idle" suelta la camara y deja el proceso vivo.
+        if en_idle or n_frame % 15 == 0:
             _rt = _leer_fuente_runtime()
             if _rt and _rt[1] != source_version:
                 source_version = _rt[1]
                 fuente_actual = _rt[0]
+                if fuente_video is not None:
+                    fuente_video.liberar()
+                    fuente_video = None
+                if fuente_actual == "idle":
+                    en_idle = True
+                    source_type, source_name = "idle", "DETENIDO"
+                    print("[FUENTE] DETENIDO -> camara liberada (proceso sigue vivo)")
+                    continue
+                en_idle = False
                 es_archivo = isinstance(fuente_actual, str) and "://" not in fuente_actual
-                fuente_video.liberar()
                 fuente_video = FuenteVideo(fuente_actual, es_archivo)
                 fps = fuente_video.get_fps()
                 if not fps or fps <= 0:
@@ -595,6 +616,14 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
                 source_name = os.path.basename(str(fuente_actual)) if es_archivo else "EN VIVO"
                 print(f"[FUENTE] cambiada -> {source_name} ({source_type})")
                 continue
+
+        # ── DETENIDO (idle): no hay camara. Emitir status ~1/s y dormir. ──
+        if en_idle:
+            if on_fps is not None and time.time() - fps_t0 >= 1.0:
+                on_fps(0.0, source_type, source_name)
+                fps_t0, fps_frames = time.time(), 0
+            time.sleep(0.1)
+            continue
 
         # ── pacing tiempo real (solo video grabado) ──────────────────────────
         # objetivo = indice de frame que el reloj de pared dice que deberia mostrarse
@@ -716,7 +745,8 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             if tecla == ord("s") and CALIBRAR:
                 _guardar_config(zona)
 
-    fuente_video.liberar()
+    if fuente_video is not None:
+        fuente_video.liberar()
     if MOSTRAR_VENTANA:
         cv2.destroyAllWindows()
     # esperar a que terminen las capturas en vuelo antes de cerrar

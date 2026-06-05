@@ -28,6 +28,14 @@ from segmentacion import postprocesamiento as seg_pp
 from ocr import postprocesamiento as ocr_pp
 from deteccion_placas import deskew_rotacion as deskew   # enderezado por ROTACION (Hough)
 
+# GATE de validez de placa: una placa ecuatoriana tiene 6-7 caracteres (3 letras +
+# 3/4 digitos). Si la segmentacion deja menos de MIN o mas de MAX crops, lo detectado
+# NO es una placa (reja, faro, ventana, arbusto) -> se DESCARTA el frame para no
+# registrar eventos basura como los falsos positivos. El rango 5-7 tolera 1 caracter
+# fusionado sin colar los falsos de 1-3 cajas.
+MIN_CHARS_PLACA = 5
+MAX_CHARS_PLACA = 7
+
 
 @dataclass
 class Modelos:
@@ -206,6 +214,15 @@ def procesar_frame_detallado(nombre, frame, m):
     # no confianza). Se aplica antes de guardar/dibujar para que el overlay y los
     # crops del OCR salgan limpios.
     cajas, crops = seg_pp.filtrar_ruido(cajas, crops)
+
+    # GATE de validez: si el numero de caracteres esta fuera del rango de una placa
+    # real, lo detectado no es una placa -> se descarta (no se guarda ni registra).
+    n_chars = len(crops)
+    if n_chars < MIN_CHARS_PLACA or n_chars > MAX_CHARS_PLACA:
+        print(f"  [DESCARTADO] {nombre}: {n_chars} caracteres "
+              f"(fuera de {MIN_CHARS_PLACA}-{MAX_CHARS_PLACA}) -> no es una placa")
+        return None
+
     etapa2.guardar(nombre, crops)
 
     # visualizacion de la segmentacion: entrada_seg con las cajas de caracteres

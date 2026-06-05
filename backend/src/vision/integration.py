@@ -291,6 +291,7 @@ def hacer_al_capturar(modelos):
                     nivel_riesgo=riesgo,
                     dias_sancion_sugeridos=sancion,
                     reglas_activadas=payload["fuzzy"]["reglas_activadas"],
+                    salida_crisp=fz.salida_crisp,   # SIN esto la DB guarda NULL -> "Sin sancion" al refrescar
                 )
 
         except Exception as exc:

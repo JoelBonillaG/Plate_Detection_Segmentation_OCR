@@ -400,18 +400,22 @@ function SourceBadge() {
   const { systemStatus } = useRealtime();
   const t = systemStatus.sourceType, n = systemStatus.sourceName;
   if (!t) return null;
+  if (t === "idle") return <span className="src-badge video">DETENIDO</span>;
   return t === "live"
     ? <span className="src-badge live"><span className="src-dot" /> EN VIVO</span>
     : <span className="src-badge video" title={n}>VIDEO · {n}</span>;
 }
 
-// Selector de fuente: botón que abre el EXPLORADOR de la PC (sin teclear rutas) + EN VIVO.
+// Selector de fuente: EXPLORADOR de la PC + EN VIVO (con índice de cámara opcional) + DETENER.
 function SourcePicker() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [camIdx, setCamIdx] = useState("");   // índice de cámara opcional para EN VIVO
 
   const post = async (url, body) => {
-    setBusy(true); setMsg(url.endsWith("browse") ? "Abriendo explorador…" : "");
+    setBusy(true);
+    setMsg(url.endsWith("browse") ? "Abriendo explorador…"
+         : url.endsWith("stop")   ? "Deteniendo…" : "");
     let delay = 4000;
     try {
       const r = await fetch(`${API}${url}`, body
@@ -419,11 +423,21 @@ function SourcePicker() {
         : { method: "POST" });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail ?? "Error");
+      const s = body?.source;
       if (d.cancelled) setMsg("");
+      else if (d.stopped) setMsg("Detenido — cámara liberada.");
       else if (d.vision_launched) { setMsg("Iniciando visión… (~15 s la primera vez)"); delay = 16000; }
-      else setMsg(body?.source === "live" ? "Cambiando a EN VIVO…" : `Reproduciendo ${d.name ?? ""}…`);
+      else if (s === "live") setMsg("Cambiando a EN VIVO…");
+      else if (/^\d+$/.test(String(s))) setMsg(`Cámara #${s}…`);
+      else setMsg(`Reproduciendo ${d.name ?? ""}…`);
     } catch (e) { setMsg(e.message); }
     finally { setBusy(false); setTimeout(() => setMsg(""), delay); }
+  };
+
+  // EN VIVO: con índice -> esa cámara; vacío -> la configurada en camara/config.json.
+  const goLive = () => {
+    const idx = camIdx.trim();
+    post("/api/source", { source: idx === "" ? "live" : idx });
   };
 
   return (
@@ -433,8 +447,19 @@ function SourcePicker() {
         <Play size={14} /> {busy ? "…" : "Elegir video"}
       </button>
       <button className="source-btn live" disabled={busy}
-              onClick={() => post("/api/source", { source: "live" })} title="Cámara en vivo">
+              onClick={goLive} title="Cámara en vivo (usa el índice si lo escribes)">
         EN VIVO
+      </button>
+      <input className="source-cam-idx" type="number" min="0" step="1" placeholder="cám #"
+             value={camIdx} disabled={busy}
+             onChange={e => setCamIdx(e.target.value)}
+             title="Índice de cámara opcional (vacío = la configurada). DroidCam suele ser 1."
+             style={{ width: 56, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border)",
+                      fontSize: ".78rem", textAlign: "center" }} />
+      <button className="source-btn stop" disabled={busy}
+              onClick={() => post("/api/source/stop")} title="Detener: libera la cámara (la visión sigue lista)"
+              style={{ background: "var(--uta-red, #c12028)", color: "#fff" }}>
+        <Minus size={14} /> Detener
       </button>
       {msg && <span className="source-msg">{msg}</span>}
     </div>
@@ -548,7 +573,7 @@ function LatestDetection({ event, onOpen }) {
       <div className="card-body">
         {/* Frame completo del vehículo */}
         <div className="latest-vehicle-img">
-          <img src={event.images.frame} alt="Vehículo detectado" />
+          <img src={event.images.frame} alt="Imagen capturada" />
         </div>
 
         <dl className="kv-list" style={{ marginTop: 12 }}>
@@ -786,6 +811,7 @@ function ReviewModal({ event, onClose }) {
   const [unlocked, setUnlocked] = useState(false);  // candado: editable solo si se desbloquea
   const [status, setStatus] = useState("idle"); // idle | loading | ok | error
   const [msg, setMsg]       = useState("");
+  const { markReviewed }    = useRealtime();
 
   const dbId = event.db_id ?? event.id;
   const original = (event.plateOcr ?? "").toUpperCase();
@@ -809,8 +835,12 @@ function ReviewModal({ event, onClose }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? "Error del servidor");
       setStatus("ok");
+      // refleja el nuevo estado en la app: el evento deja de estar 'pendiente' y el
+      // boton "Revisar" desaparece -> no se puede aprobar (ni reenviar correo) dos veces.
+      markReviewed(event.id, action === "approve" ? "aprobado" : "rechazado",
+                   modified ? placa.trim().toUpperCase() : undefined);
       setMsg(action === "approve"
-        ? (data["email-sent"] > 0 ? "Sanción aprobada. Correo enviado al ingeniero."
+        ? (data["email-sent"] > 0 ? "Correo enviado."
                                   : "Sanción aprobada (correo en cola u OFF).")
         : "Evento rechazado correctamente.");
     } catch (e) { setStatus("error"); setMsg(e.message); }
@@ -923,7 +953,7 @@ function ResumenTab({ event }) {
             </div>
             <div className="evidence-images" style={cropImg ? undefined : { gridTemplateColumns: "1fr" }}>
               <div className="main-img-wrap">
-                <img src={event.images.frame} alt="Vehículo detectado" />
+                <img src={event.images.frame} alt="Imagen capturada" />
               </div>
               {cropImg && (
                 <div className="plate-img-wrap">
@@ -994,7 +1024,7 @@ function ResumenTab({ event }) {
 
           {event.reviewStatus === "pendiente" && (
             <button className="review-cta" onClick={() => setReviewOpen(true)}>
-              <ShieldAlert size={16} /> Revisar y aprobar
+              <ShieldAlert size={16} /> Revisar
             </button>
           )}
         </div>
@@ -1017,7 +1047,7 @@ function VisionTab({ event }) {
   // Etapas. Las CNN tienen confianza real (barra). Enderezado/Filtros/Segmentación
   // son CV determinista -> sin barra, solo "✓ Aplicado" (no se inventan %).
   const stages = [
-    { label: "Vehículo detectado", src: event.images.frame,         conf: cv.vehicleDetection.confidence },
+    { label: "Imagen capturada",   src: event.images.frame,         conf: cv.vehicleDetection.confidence },
     { label: "Placa detectada",    src: event.images.plateDetected, conf: cv.plateDetection.confidence },
     { label: "Enderezado",         src: event.images.plateStraight, conf: null, applied: cv.usoEnderezado },
     { label: "Filtros",            src: event.images.plateFiltered, conf: null, applied: cv.usoFiltros },

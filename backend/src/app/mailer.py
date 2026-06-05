@@ -60,6 +60,11 @@ def send_email(payload: EmailPayload) -> None:
     _validate_smtp_settings()
     settings = get_settings()
 
+    print(f"[MAIL] enviando -> to={payload.to} subject={payload.subject!r} "
+          f"host={settings.smtp_host}:{settings.smtp_port} enc={settings.smtp_encryption} "
+          f"html={'si' if payload.html else 'no'} "
+          f"inline={len(payload.inline_images) if payload.inline_images else 0}")
+
     message = EmailMessage()
     message["From"] = settings.smtp_from
     message["To"] = payload.to
@@ -85,6 +90,7 @@ def send_email(payload: EmailPayload) -> None:
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context) as server:
             server.login(settings.smtp_user, settings.smtp_password)
             server.send_message(message)
+        print(f"[MAIL] OK -> {payload.to} (SSL)")
         return
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
@@ -92,6 +98,7 @@ def send_email(payload: EmailPayload) -> None:
             server.starttls(context=ssl.create_default_context())
         server.login(settings.smtp_user, settings.smtp_password)
         server.send_message(message)
+    print(f"[MAIL] OK -> {payload.to} ({settings.smtp_encryption})")
 
 
 def build_detection_body(data: dict) -> str:
@@ -188,7 +195,7 @@ _RIESGO_COLOR = {"alto": "#c0392b", "medio": "#e67e22", "bajo": "#27ae60"}
 
 # (cid, titulo, fuente_en_data) -> de donde sale la ruta relativa de cada etapa
 _ETAPAS = [
-    ("frame",           "1. Vehículo",        ("imagen_frame",)),
+    ("frame",           "1. Imagen capturada", ("imagen_frame",)),
     ("placa_detectada", "2. Placa detectada", ("vision", "ruta_placa_detectada")),
     ("segmentacion",    "3. Segmentación",    ("vision", "ruta_segmentacion")),
 ]
@@ -257,26 +264,31 @@ def _fmt_regla(r, html=False) -> str:
     return f"{rid_s}: exceso {e} + reincidencia {rc} → {s}{act}"
 
 
-def build_detection_html(data: dict):
-    """Devuelve (html, image_map) donde image_map={cid: ruta_relativa}. El caller
-    resuelve la ruta a archivo absoluto y solo embebe las que existan."""
+# cabecera compartida: barra de color + placa + Grupo C / integrantes
+_INTEGRANTES_HTML = (
+    '<div style="font-size:12px;opacity:.9;line-height:1.6;margin-top:10px;">'
+    'SISTEMA DE MONITOREO VEHICULAR · UTA<br>'
+    'Grupo C<br>Integrantes:<br>Joel Bonilla<br>Josué García</div>'
+)
+
+
+def _header_html(color: str, placa_fmt: str, subtitulo: str) -> str:
+    return (
+        f'<div style="background:{color};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0;">'
+        f'<div style="font-size:26px;font-weight:bold;letter-spacing:2px;">{placa_fmt}</div>'
+        f'<div style="font-size:13px;margin-top:2px;">{subtitulo}</div>'
+        f'{_INTEGRANTES_HTML}</div>'
+    )
+
+
+def _bloque_proceso_vision(data: dict, image_map: dict) -> str:
+    """HTML del 'Proceso de visión' (etapas 1-3 + Clasificación OCR). Rellena image_map
+    con cid->ruta de cada imagen embebida. COMPARTIDO por infracción y cortesía."""
     vision = data.get("vision") or {}
-    fuzzy = data.get("fuzzy") or {}
-    meta = vision.get("metadata") or {}
-
-    placa     = data.get("placa_validada") or data.get("placa_ocr") or "—"
+    placa = data.get("placa_validada") or data.get("placa_ocr") or "—"
     placa_fmt = f"{placa[:3]}-{placa[3:]}" if isinstance(placa, str) and len(placa) > 3 else placa
-    tipo      = (data.get("tipo_evento") or "—").upper()
-    velocidad = float(data.get("velocidad", 0) or 0)
-    limite    = float(data.get("limite_velocidad", 20) or 20)
-    exceso    = velocidad - limite
-    nivel     = (data.get("nivel_riesgo") or fuzzy.get("nivel_riesgo") or "—")
-    dias      = data.get("dias_sancion_sugeridos", 0)
-    reinc     = data.get("reincidencias", 0)
-    crisp     = fuzzy.get("salida_crisp")
-    color     = _RIESGO_COLOR.get(str(nivel).lower(), "#555")
 
-    image_map, etapas_html = {}, []
+    etapas_html = []
     for cid, titulo, ruta in _ETAPAS:
         rel = _dig(data, ruta)
         if not rel:
@@ -287,7 +299,7 @@ def build_detection_html(data: dict):
             f'<img src="cid:{cid}" alt="{titulo}" style="max-width:150px;border:1px solid #ddd;'
             f'border-radius:4px;display:block;"><div style="margin-top:4px;">{titulo}</div></td>')
 
-    # Clasificación (mismo criterio que la web): crop del char + letra + confianza, CENTRADO.
+    # Clasificación: crop del char + letra + confianza, CENTRADO (mismo criterio que la web).
     chips = []
     for i, c in enumerate(vision.get("ocr_por_caracter") or []):
         ch = c.get("caracter", "?")
@@ -314,11 +326,35 @@ def build_detection_html(data: dict):
         f'margin-top:8px;color:#222;">{placa_fmt}</div></div>'
     ) if chips else ""
 
-    # reglas difusas activadas (legibles, no JSON crudo)
+    return (
+        '<h3 style="margin:0 0 8px;font-size:15px;color:#333;">Proceso de visión</h3>'
+        f'<table style="border-collapse:collapse;"><tr>{"".join(etapas_html)}</tr></table>'
+        f'{clasif_html}'
+    )
+
+
+def build_detection_html(data: dict):
+    """Correo de INFRACCIÓN: proceso de visión + sistema difuso + sanción.
+    Devuelve (html, image_map)."""
+    fuzzy = data.get("fuzzy") or {}
+
+    placa     = data.get("placa_validada") or data.get("placa_ocr") or "—"
+    placa_fmt = f"{placa[:3]}-{placa[3:]}" if isinstance(placa, str) and len(placa) > 3 else placa
+    tipo      = (data.get("tipo_evento") or "—").upper()
+    velocidad = float(data.get("velocidad", 0) or 0)
+    limite    = float(data.get("limite_velocidad", 20) or 20)
+    exceso    = velocidad - limite
+    nivel     = (data.get("nivel_riesgo") or fuzzy.get("nivel_riesgo") or "—")
+    reinc     = data.get("reincidencias", 0)
+    crisp     = fuzzy.get("salida_crisp")
+    color     = _RIESGO_COLOR.get(str(nivel).lower(), "#555")
+
+    image_map = {}
+    proceso = _bloque_proceso_vision(data, image_map)
+
     reglas = fuzzy.get("reglas_activadas") or []
     reglas_html = "".join(f"<li>{_fmt_regla(r, html=True)}</li>" for r in reglas) or "<li><i>—</i></li>"
 
-    # pertenencias velocidad como mini-barras
     def _barras(d: dict):
         filas = []
         for k, v in (d or {}).items():
@@ -332,24 +368,13 @@ def build_detection_html(data: dict):
 
     exceso_txt = (f'<span style="color:#c0392b;">+{exceso:.1f} km/h</span>'
                   if exceso > 0 else '<span style="color:#27ae60;">dentro del límite</span>')
+    subtitulo = f'{tipo} · {reinc} reincidencia(s) · <b>RIESGO {str(nivel).upper()}</b>'
 
     html = f"""\
 <div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:auto;color:#222;">
-  <div style="background:{color};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0;">
-    <div style="font-size:26px;font-weight:bold;letter-spacing:2px;">{placa_fmt}</div>
-    <div style="font-size:13px;margin-top:2px;">{tipo} · {reinc} reincidencia(s) ·
-      <b>RIESGO {str(nivel).upper()}</b></div>
-    <div style="font-size:12px;opacity:.9;line-height:1.6;margin-top:10px;">
-      SISTEMA DE MONITOREO VEHICULAR · UTA<br>
-      Grupo C<br>
-      Integrantes:<br>Joel Bonilla<br>Josué García
-    </div>
-  </div>
+  {_header_html(color, placa_fmt, subtitulo)}
   <div style="border:1px solid #eee;border-top:none;padding:18px 20px;border-radius:0 0 8px 8px;">
-
-    <h3 style="margin:0 0 8px;font-size:15px;color:#333;">Proceso de visión — paso a paso</h3>
-    <table style="border-collapse:collapse;"><tr>{''.join(etapas_html)}</tr></table>
-    {clasif_html}
+    {proceso}
 
     <h3 style="margin:20px 0 8px;font-size:15px;color:#333;">Sistema difuso (Mamdani)</h3>
     <table style="font-size:13px;line-height:1.7;">
@@ -364,6 +389,38 @@ def build_detection_html(data: dict):
     <table>{_barras(fuzzy.get('pertenencia_velocidad'))}</table>
     <div style="margin-top:6px;font-size:12px;color:#666;">Reglas activadas ({len(reglas)}):</div>
     <ul style="margin:4px 0;font-size:12px;color:#444;">{reglas_html}</ul>
+  </div>
+</div>"""
+    return html, image_map
+
+
+def build_courtesy_html(data: dict):
+    """Correo de CORTESÍA (sin infracción): MISMA base que el de infracción (proceso de
+    visión completo) pero SIN sistema difuso ni multa; cabecera verde 'dentro del
+    límite'. Devuelve (html, image_map)."""
+    placa     = data.get("placa_validada") or data.get("placa_ocr") or "—"
+    placa_fmt = f"{placa[:3]}-{placa[3:]}" if isinstance(placa, str) and len(placa) > 3 else placa
+    velocidad = float(data.get("velocidad", 0) or 0)
+    limite    = float(data.get("limite_velocidad", 20) or 20)
+    color     = "#27ae60"   # verde: dentro del límite
+
+    image_map = {}
+    proceso = _bloque_proceso_vision(data, image_map)
+    subtitulo = 'Circulación registrada · <b>dentro del límite</b>'
+
+    html = f"""\
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:auto;color:#222;">
+  {_header_html(color, placa_fmt, subtitulo)}
+  <div style="border:1px solid #eee;border-top:none;padding:18px 20px;border-radius:0 0 8px 8px;">
+    <p style="font-size:14px;line-height:1.6;margin:0 0 6px;">
+      Su vehículo fue registrado circulando a <b>{velocidad:.1f} km/h</b>, dentro del
+      límite de <b>{limite:.0f} km/h</b> de la zona. No se generó ninguna sanción.
+    </p>
+    <p style="font-size:14px;line-height:1.6;margin:0 0 14px;color:#2e7d32;">
+      Gracias por circular de forma responsable: ayuda a mantener el campus seguro
+      para toda la comunidad.
+    </p>
+    {proceso}
   </div>
 </div>"""
     return html, image_map

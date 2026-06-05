@@ -74,8 +74,10 @@ if __name__ == "__main__":
         _src = get_runtime().get("source")
         if _src == "live":
             fuente = CAMARA_IDX
+        elif _src == "idle":
+            fuente = "idle"                                  # arranca DETENIDO
         elif _src:
-            fuente = _src
+            fuente = int(_src) if str(_src).isdigit() else _src   # indice de camara o ruta
     except Exception:
         pass
     # el argumento CLI manda sobre todo (start_vision.ps1 "ruta\\video.mp4").

@@ -1,5 +1,5 @@
 {
-  "camara_idx": 2,
+  "camara_idx": 1,
   "ventana_w": 1280,
   "ventana_h": 720,
   "stream_w": 640,
@@ -32,7 +32,7 @@
   "inferencia_cada": 1,
   "detectar_carros": false,
   "tolerancia_carro": 3,
-  "tolerancia_placa": 8,
+  "tolerancia_placa": 12,
   "calibrar": true,
   "mostrar_ventana": true,
   "reconectar": true,
