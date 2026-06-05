@@ -300,7 +300,7 @@ def approve_evento(evento_id: str, placa_corregida: str | None, motivo: str | No
                 from .config import get_settings
                 destino = get_settings().envio_infracciones_a
                 placa  = ev.get("placa_validada") or ev.get("placa_ocr")
-                asunto = f"[Monitoreo UTA] Sanción aprobada — Placa {placa}"
+                asunto = "Deteccion vehicular - Grupo C - Inteligencia artificial"
                 from .mailer import build_detection_body
                 ocr_chars = (ev.get("vision_metadata") or {}).get("ocr_por_caracter", [])
                 data_correo = {

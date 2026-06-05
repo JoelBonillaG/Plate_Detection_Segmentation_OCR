@@ -39,7 +39,7 @@ from .database import (
     mark_notification_sent,
 )
 from .mailer import (
-    EmailPayload, send_email, build_detection_html,
+    EmailPayload, send_email, build_detection_html, build_courtesy_html,
     email_enabled, set_email_enabled,
 )
 from .runtime import get_runtime, set_runtime
@@ -116,7 +116,7 @@ async def video_stream(ws: WebSocket) -> None:
         await video_manager.disconnect(ws)
 
 
-# ── Auto-envio de correo en la DETECCION (si Correo ON y es infraccion) ───────
+# ── Auto-envio de correo en la DETECCION (si Correo ON, para TODO evento) ─────
 _autosent_ids: set[str] = set()
 
 
@@ -129,7 +129,14 @@ def _autosend_email(event: dict) -> None:
         to = get_settings().envio_infracciones_a
         if not to:
             return
-        html, image_map = build_detection_html(event)
+        # normal (dentro del limite) -> correo de cortesia ; infraccion -> correo con difuso/multa
+        es_normal = (event.get("tipo_evento") or "normal") == "normal"
+        if es_normal:
+            html, image_map = build_courtesy_html(event)
+            cuerpo_txt = "Su vehiculo circulo dentro del limite. Gracias (ver version HTML)."
+        else:
+            html, image_map = build_detection_html(event)
+            cuerpo_txt = "Evento detectado por el sistema (ver version HTML)."
         inline = {}
         for cid, rel in image_map.items():
             ruta = STATIC_DIR / rel
@@ -138,20 +145,19 @@ def _autosend_email(event: dict) -> None:
         placa = event.get("placa_validada") or event.get("placa_ocr") or "—"
         send_email(EmailPayload(
             to=to,
-            subject=f"[Monitoreo UTA] Deteccion — Placa {placa}",
-            body="Evento detectado por el sistema (ver version HTML).",
+            subject="Deteccion vehicular - Grupo C - Inteligencia artificial",
+            body=cuerpo_txt,
             html=html, inline_images=inline or None))
-        print(f"[CORREO] auto-enviado a {to}: {placa}")
+        print(f"[CORREO] auto-enviado a {to}: {placa} ({'cortesia' if es_normal else 'infraccion'})")
     except Exception as exc:
         print(f"[CORREO] auto-envio fallo: {exc}")
 
 
 def _maybe_autosend_email(event: dict) -> None:
-    """Dispara el correo automatico si el correo esta ON y el evento es infraccion
-    (no 'normal'). Evita duplicados por id."""
+    """Dispara el correo automatico si el correo esta ON, para TODO evento: infraccion
+    -> correo con difuso/multa ; normal -> correo de cortesia (sin multa). Evita
+    duplicados por id."""
     if not email_enabled():
-        return
-    if (event.get("tipo_evento") or "normal") == "normal":
         return
     eid = str(event.get("id") or event.get("db_id") or "")
     if eid and eid in _autosent_ids:
