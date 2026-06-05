@@ -160,6 +160,26 @@ def count_reincidencias(placa: str) -> int:
             return int(row["n"]) if row else 0
 
 
+def resolve_evento_id(evento_id: str) -> str | None:
+    """Acepta el UUID real o el id display 'EVT-XXXXXXXX' (primeros 8 hex del UUID)
+    y devuelve el UUID real. Los eventos en vivo (via WS) llegan con db_id null, asi
+    que el frontend usa el id display al aprobar -> hay que resolverlo. None si no existe."""
+    eid = (evento_id or "").strip()
+    if eid.upper().startswith("EVT-"):
+        hexp = eid[4:].replace("-", "").lower()
+        if not hexp:
+            return None
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM eventos WHERE replace(id::text, '-', '') LIKE %s LIMIT 1",
+                    (hexp + "%",),
+                )
+                row = cur.fetchone()
+                return str(row["id"]) if row else None
+    return eid
+
+
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
 def fetch_eventos(limit: int = 50, offset: int = 0) -> list[dict]:

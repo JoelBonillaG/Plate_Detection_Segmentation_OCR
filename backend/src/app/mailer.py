@@ -164,25 +164,18 @@ def build_detection_body(data: dict) -> str:
     if reglas:
         lines.append(f"  Reglas activadas     : {len(reglas)}")
         for r in reglas:
-            lines.append(f"    · {r}")
+            lines.append(f"    · {_fmt_regla(r)}")
 
     pert_v = fuzzy.get("pertenencia_velocidad") or {}
     if pert_v:
-        pv_str = "  |  ".join(f"{k}: {float(v):.2f}" for k, v in pert_v.items())
+        pv_str = "  |  ".join(f"{_LBL.get(k, k)}: {float(v):.2f}" for k, v in pert_v.items())
         lines.append(f"  Pertenencia velocidad: {pv_str}")
 
     pert_r = fuzzy.get("pertenencia_reincidencia") or {}
     if pert_r:
-        pr_str = "  |  ".join(f"{k}: {float(v):.2f}" for k, v in pert_r.items())
+        pr_str = "  |  ".join(f"{_LBL.get(k, k)}: {float(v):.2f}" for k, v in pert_r.items())
         lines.append(f"  Pertenencia reinc.   : {pr_str}")
 
-    lines += [
-        "",
-        sep,
-        "  Mensaje generado automáticamente por el sistema de visión artificial.",
-        "  No responder a este correo.",
-        sep,
-    ]
     return "\n".join(lines)
 
 
@@ -195,11 +188,9 @@ _RIESGO_COLOR = {"alto": "#c0392b", "medio": "#e67e22", "bajo": "#27ae60"}
 
 # (cid, titulo, fuente_en_data) -> de donde sale la ruta relativa de cada etapa
 _ETAPAS = [
-    ("frame",            "1. Vehículo",          ("imagen_frame",)),
-    ("placa_detectada",  "2. Placa detectada",   ("vision", "ruta_placa_detectada")),
-    ("placa_enderezada", "3. Enderezada",        ("vision", "ruta_placa_enderezada")),
-    ("placa_filtrada",   "4. Filtrada",          ("vision", "ruta_placa_filtrada")),
-    ("segmentacion",     "5. Segmentación",      ("vision", "ruta_segmentacion")),
+    ("frame",           "1. Vehículo",        ("imagen_frame",)),
+    ("placa_detectada", "2. Placa detectada", ("vision", "ruta_placa_detectada")),
+    ("segmentacion",    "3. Segmentación",    ("vision", "ruta_segmentacion")),
 ]
 
 
@@ -231,16 +222,39 @@ def _crisp_to_horas(crisp) -> float:
 def sancion_texto(fuzzy: dict) -> str:
     """Texto de sancion: expulsion / 'X d Y h' / 'Sin suspension'."""
     if fuzzy.get("es_temeraria"):
-        return "Expulsion definitiva (conducta temeraria)"
+        return "Expulsión definitiva (conducta temeraria)"
     h = round(_crisp_to_horas(fuzzy.get("salida_crisp")))
     if h <= 0:
-        return "Sin suspension (advertencia)"
+        return "Sin suspensión (advertencia)"
     d, r = divmod(h, 24)
     if d == 0:
         return f"{r} h"
     if r == 0:
         return f"{d} d"
     return f"{d} d {r} h"
+
+
+_LBL = {
+    "no_excess": "sin exceso", "minor": "leve", "moderate": "moderado",
+    "serious": "grave", "critical": "crítico",
+    "clean": "limpio", "low": "bajo", "high": "alto", "chronic": "crónico",
+    "no_action": "sin acción", "warning": "advertencia", "low_susp": "susp. baja",
+    "medium_susp": "susp. media", "high_susp": "susp. alta", "critical_susp": "susp. crítica",
+}
+
+
+def _fmt_regla(r, html=False) -> str:
+    """Regla difusa legible: 'R6: exceso leve + reincidencia limpio → advertencia (act. 0.38)'."""
+    if not isinstance(r, dict):
+        return str(r)
+    e = _LBL.get(r.get("exceso_set"), str(r.get("exceso_set", "")))
+    rc = _LBL.get(r.get("reincidencia_set"), str(r.get("reincidencia_set", "")))
+    s = _LBL.get(r.get("severidad_set"), str(r.get("severidad_set", "")))
+    a = r.get("activacion")
+    act = f" (act. {float(a):.2f})" if a is not None else ""
+    rid = r.get("id", "")
+    rid_s = f"<b>{rid}</b>" if html else rid
+    return f"{rid_s}: exceso {e} + reincidencia {rc} → {s}{act}"
 
 
 def build_detection_html(data: dict):
@@ -262,29 +276,18 @@ def build_detection_html(data: dict):
     crisp     = fuzzy.get("salida_crisp")
     color     = _RIESGO_COLOR.get(str(nivel).lower(), "#555")
 
-    # qué etapas se omitieron (mismo criterio que el frontend)
-    omitido = {
-        "placa_enderezada": str(meta.get("enderezado", "")).lower() == "omitido",
-        "placa_filtrada":   str(meta.get("filtros", "")).lower() in ("omitido", "omitidos"),
-    }
-
     image_map, etapas_html = {}, []
     for cid, titulo, ruta in _ETAPAS:
         rel = _dig(data, ruta)
-        if rel:
-            image_map[cid] = rel
-            cuerpo = (f'<img src="cid:{cid}" alt="{titulo}" '
-                      f'style="max-width:150px;border:1px solid #ddd;border-radius:4px;display:block;">')
-        elif omitido.get(cid):
-            cuerpo = ('<div style="width:120px;height:48px;line-height:48px;text-align:center;'
-                      'background:#eee;color:#999;border-radius:4px;font-size:12px;">Omitido</div>')
-        else:
+        if not rel:
             continue
+        image_map[cid] = rel
         etapas_html.append(
             f'<td style="padding:6px;vertical-align:top;text-align:center;font-size:11px;color:#444;">'
-            f'{cuerpo}<div style="margin-top:4px;">{titulo}</div></td>')
+            f'<img src="cid:{cid}" alt="{titulo}" style="max-width:150px;border:1px solid #ddd;'
+            f'border-radius:4px;display:block;"><div style="margin-top:4px;">{titulo}</div></td>')
 
-    # OCR por caracter -> crop del char (inline) + letra leida + confianza (color)
+    # Clasificación (mismo criterio que la web): crop del char + letra + confianza, CENTRADO.
     chips = []
     for i, c in enumerate(vision.get("ocr_por_caracter") or []):
         ch = c.get("caracter", "?")
@@ -294,19 +297,26 @@ def build_detection_html(data: dict):
         if rel:
             cid = f"char{i}"
             image_map[cid] = rel
-            img_html = (f'<img src="cid:{cid}" alt="{ch}" style="display:block;width:34px;'
-                        f'height:46px;object-fit:contain;background:#fff;border:1px solid #ddd;'
+            img_html = (f'<img src="cid:{cid}" alt="{ch}" style="display:block;width:38px;'
+                        f'height:52px;object-fit:contain;background:#fff;border:1px solid #ddd;'
                         f'border-radius:3px;margin:0 auto 3px;">')
         chips.append(
-            f'<td style="text-align:center;padding:3px;vertical-align:bottom;">{img_html}'
-            f'<div style="font-family:monospace;font-weight:bold;font-size:14px;">{ch}</div>'
+            f'<td style="text-align:center;padding:4px;vertical-align:bottom;">{img_html}'
+            f'<div style="font-family:monospace;font-weight:bold;font-size:15px;">{ch}</div>'
             f'<div style="color:{_conf_color(cf)};font-size:11px;">{cf*100:.0f}%</div></td>')
-    chips_html = (f'<table style="border-collapse:collapse;"><tr>{"".join(chips)}</tr></table>'
-                  if chips else "<i>sin datos</i>")
+    n_clasif = len(etapas_html) + 1
+    clasif_html = (
+        f'<div style="font-weight:bold;color:#333;font-size:13px;margin:18px 0 8px;">'
+        f'{n_clasif}. Clasificación</div>'
+        f'<div style="text-align:center;">'
+        f'<table style="border-collapse:collapse;margin:0 auto;"><tr>{"".join(chips)}</tr></table>'
+        f'<div style="font-family:monospace;font-weight:800;font-size:22px;letter-spacing:3px;'
+        f'margin-top:8px;color:#222;">{placa_fmt}</div></div>'
+    ) if chips else ""
 
-    # reglas difusas activadas
+    # reglas difusas activadas (legibles, no JSON crudo)
     reglas = fuzzy.get("reglas_activadas") or []
-    reglas_html = "".join(f"<li>{r}</li>" for r in reglas) or "<li><i>—</i></li>"
+    reglas_html = "".join(f"<li>{_fmt_regla(r, html=True)}</li>" for r in reglas) or "<li><i>—</i></li>"
 
     # pertenencias velocidad como mini-barras
     def _barras(d: dict):
@@ -314,7 +324,7 @@ def build_detection_html(data: dict):
         for k, v in (d or {}).items():
             v = float(v or 0)
             filas.append(
-                f'<tr><td style="font-size:11px;color:#555;padding:1px 6px;">{k}</td>'
+                f'<tr><td style="font-size:11px;color:#555;padding:1px 6px;">{_LBL.get(k, k)}</td>'
                 f'<td style="width:120px;"><div style="background:#eee;border-radius:3px;">'
                 f'<div style="width:{v*100:.0f}%;background:{color};height:8px;border-radius:3px;"></div>'
                 f'</div></td><td style="font-size:11px;color:#555;padding:1px 6px;">{v:.2f}</td></tr>')
@@ -326,16 +336,20 @@ def build_detection_html(data: dict):
     html = f"""\
 <div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:auto;color:#222;">
   <div style="background:{color};color:#fff;padding:16px 20px;border-radius:8px 8px 0 0;">
-    <div style="font-size:13px;opacity:.85;">SISTEMA DE MONITOREO VEHICULAR · UTA · Grupo C</div>
     <div style="font-size:26px;font-weight:bold;letter-spacing:2px;">{placa_fmt}</div>
-    <div style="font-size:13px;">{tipo} · {reinc} reincidencia(s) ·
+    <div style="font-size:13px;margin-top:2px;">{tipo} · {reinc} reincidencia(s) ·
       <b>RIESGO {str(nivel).upper()}</b></div>
+    <div style="font-size:12px;opacity:.9;line-height:1.6;margin-top:10px;">
+      SISTEMA DE MONITOREO VEHICULAR · UTA<br>
+      Grupo C<br>
+      Integrantes:<br>Joel Bonilla<br>Josué García
+    </div>
   </div>
   <div style="border:1px solid #eee;border-top:none;padding:18px 20px;border-radius:0 0 8px 8px;">
 
     <h3 style="margin:0 0 8px;font-size:15px;color:#333;">Proceso de visión — paso a paso</h3>
     <table style="border-collapse:collapse;"><tr>{''.join(etapas_html)}</tr></table>
-    <div style="margin-top:10px;font-size:13px;"><b>OCR:</b> {chips_html}</div>
+    {clasif_html}
 
     <h3 style="margin:20px 0 8px;font-size:15px;color:#333;">Sistema difuso (Mamdani)</h3>
     <table style="font-size:13px;line-height:1.7;">
@@ -350,10 +364,6 @@ def build_detection_html(data: dict):
     <table>{_barras(fuzzy.get('pertenencia_velocidad'))}</table>
     <div style="margin-top:6px;font-size:12px;color:#666;">Reglas activadas ({len(reglas)}):</div>
     <ul style="margin:4px 0;font-size:12px;color:#444;">{reglas_html}</ul>
-
-    <div style="margin-top:16px;padding-top:10px;border-top:1px solid #eee;font-size:11px;color:#999;">
-      Mensaje generado automáticamente por el sistema de visión artificial. No responder a este correo.
-    </div>
   </div>
 </div>"""
     return html, image_map

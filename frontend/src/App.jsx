@@ -256,9 +256,13 @@ function Topbar({ connected, onOpenDetail }) {
 
   return (
     <header className="topbar">
-      <StatusPill icon={CheckCircle2} label="Sistema" value={systemStatus.system}     tone="green" />
-      <StatusPill icon={Camera}       label="Fuente"  value={systemStatus.sourceType === "live" ? "EN VIVO" : (systemStatus.sourceName || "—")} tone="cyan" />
-      <StatusPill icon={Database}     label="Backend" value={systemStatus.backend}    tone="blue" />
+      {/* Un solo indicador de conexión (a la izquierda); evita repetir Sistema/Backend */}
+      <div className="ws-indicator" title={connected ? "WebSocket activo" : "Sin conexión WebSocket"}>
+        {connected
+          ? <><Wifi size={14} style={{ color: "#16a34a" }} /><span style={{ fontSize: ".72rem", color: "#16a34a", fontWeight: 600 }}>En línea</span></>
+          : <><WifiOff size={14} style={{ color: "var(--uta-red)" }} /><span style={{ fontSize: ".72rem", color: "var(--uta-red)", fontWeight: 600 }}>Sin conexión</span></>
+        }
+      </div>
       <StatusPill icon={Gauge}        label="FPS"     value={`${systemStatus.fps}`}   tone="red" />
       <StatusPill icon={Clock3}       label="Hora"    value={systemStatus.currentTime} tone="slate" />
       <div className="topbar-spacer" />
@@ -266,14 +270,6 @@ function Topbar({ connected, onOpenDetail }) {
       {/* Boost de velocidad (presentación) + toggle global de correo */}
       <SpeedBoost />
       <EmailToggle />
-
-      {/* WS indicator */}
-      <div className="ws-indicator" title={connected ? "WebSocket activo" : "Sin conexión WebSocket"}>
-        {connected
-          ? <><Wifi size={14} style={{ color: "#16a34a" }} /><span style={{ fontSize: ".72rem", color: "#16a34a", fontWeight: 600 }}>En línea</span></>
-          : <><WifiOff size={14} style={{ color: "var(--uta-red)" }} /><span style={{ fontSize: ".72rem", color: "var(--uta-red)", fontWeight: 600 }}>Sin conexión</span></>
-        }
-      </div>
 
       {/* Bell notification */}
       <div className="bell-wrap">

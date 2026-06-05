@@ -19,8 +19,11 @@ Rutas:
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -41,7 +44,10 @@ from .mailer import (
 )
 from .runtime import get_runtime, set_runtime
 from .realtime import get_current_frame, set_current_frame, manager, video_manager, frames_flowing
-from .events_db import fetch_eventos, fetch_evento, _row_to_payload, approve_evento, reject_evento
+from .events_db import (
+    fetch_eventos, fetch_evento, _row_to_payload, approve_evento, reject_evento,
+    resolve_evento_id,
+)
 from .fuzzy import EXCESO, REINCI, SEVERIDAD, RULES, LIMITE_VELOCIDAD as FZ_LIMITE, UMBRAL_TEMERARIA as FZ_UMBRAL
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -110,6 +116,51 @@ async def video_stream(ws: WebSocket) -> None:
         await video_manager.disconnect(ws)
 
 
+# ── Auto-envio de correo en la DETECCION (si Correo ON y es infraccion) ───────
+_autosent_ids: set[str] = set()
+
+
+def _autosend_email(event: dict) -> None:
+    """Envia el correo de deteccion en un HILO (no bloquea el WS). Las imagenes se
+    leen de disco; se espera un poco porque vision emite el evento antes de escribirlas."""
+    try:
+        time.sleep(0.6)
+        from .config import get_settings
+        to = get_settings().engineer_email
+        if not to:
+            return
+        html, image_map = build_detection_html(event)
+        inline = {}
+        for cid, rel in image_map.items():
+            ruta = STATIC_DIR / rel
+            if ruta.exists():
+                inline[cid] = str(ruta)
+        placa = event.get("placa_validada") or event.get("placa_ocr") or "—"
+        send_email(EmailPayload(
+            to=to,
+            subject=f"[Monitoreo UTA] Deteccion — Placa {placa}",
+            body="Evento detectado por el sistema (ver version HTML).",
+            html=html, inline_images=inline or None))
+        print(f"[CORREO] auto-enviado a {to}: {placa}")
+    except Exception as exc:
+        print(f"[CORREO] auto-envio fallo: {exc}")
+
+
+def _maybe_autosend_email(event: dict) -> None:
+    """Dispara el correo automatico si el correo esta ON y el evento es infraccion
+    (no 'normal'). Evita duplicados por id."""
+    if not email_enabled():
+        return
+    if (event.get("tipo_evento") or "normal") == "normal":
+        return
+    eid = str(event.get("id") or event.get("db_id") or "")
+    if eid and eid in _autosent_ids:
+        return
+    if eid:
+        _autosent_ids.add(eid)
+    threading.Thread(target=_autosend_email, args=(event,), daemon=True).start()
+
+
 @app.websocket("/ws/ingest")
 async def ingest_stream(ws: WebSocket) -> None:
     """
@@ -132,8 +183,11 @@ async def ingest_stream(ws: WebSocket) -> None:
             text = msg.get("text")
             if text is not None:
                 try:
-                    import json
-                    await manager.broadcast(json.loads(text))
+                    obj = json.loads(text)
+                    await manager.broadcast(obj)
+                    # correo automatico al detectar (si Correo ON y es infraccion)
+                    if isinstance(obj, dict) and obj.get("type") == "event":
+                        _maybe_autosend_email(obj.get("data") or {})
                 except Exception:
                     pass
     except WebSocketDisconnect:
@@ -199,6 +253,11 @@ class ReviewRequest(BaseModel):
 @app.patch("/api/events/{evento_id}/approve")
 def approve_event(evento_id: str, body: ReviewRequest) -> dict:
     """Aprueba la sancion, crea notificacion y envia correo al ingeniero."""
+    # acepta UUID o id display 'EVT-...' (eventos en vivo llegan sin db_id)
+    real_id = resolve_evento_id(evento_id)
+    if not real_id:
+        raise HTTPException(status_code=404, detail=f"Evento no encontrado: {evento_id}")
+    evento_id = real_id
     try:
         approve_evento(evento_id, body.placa_corregida, body.motivo)
     except Exception as exc:
@@ -243,6 +302,10 @@ def approve_event(evento_id: str, body: ReviewRequest) -> dict:
 
 @app.patch("/api/events/{evento_id}/reject")
 def reject_event(evento_id: str, body: ReviewRequest) -> dict:
+    real_id = resolve_evento_id(evento_id)
+    if not real_id:
+        raise HTTPException(status_code=404, detail=f"Evento no encontrado: {evento_id}")
+    evento_id = real_id
     try:
         reject_evento(evento_id, body.motivo)
     except Exception as exc:
