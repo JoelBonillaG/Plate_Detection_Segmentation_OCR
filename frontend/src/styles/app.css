@@ -705,6 +705,36 @@ tr:hover td { background: #fafafa; }
 }
 .review-cta:hover { background: var(--uta-red-deep); }
 
+/* ── Selector de fuente de video (reproducir cualquier ruta) ──────────── */
+.video-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.src-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 999px; font-size: .68rem; font-weight: 800;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.src-badge.live  { background: rgba(22,163,74,.12); color: #16a34a; }
+.src-badge.video { background: rgba(37,99,235,.12); color: #2563eb; }
+.src-dot { width: 7px; height: 7px; border-radius: 50%; background: #16a34a; animation: pulse 1.4s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+.source-picker { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.source-input {
+  width: 260px; max-width: 42vw; padding: 6px 10px; font-size: .76rem;
+  border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text);
+  font-family: monospace;
+}
+.source-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 11px; border-radius: 7px; border: none; cursor: pointer;
+  font-size: .74rem; font-weight: 700; color: #fff;
+}
+.source-btn.play { background: var(--uta-red); }
+.source-btn.play:hover { background: var(--uta-red-deep); }
+.source-btn.live { background: #16a34a; }
+.source-btn.live:hover { background: #15803d; }
+.source-btn:disabled { opacity: .6; cursor: default; }
+.source-msg { font-size: .72rem; color: var(--muted); }
+
 /* Toggle global de envío de correo (kill-switch en el topbar) */
 .email-toggle {
   display: inline-flex;

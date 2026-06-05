@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from typing import Any
 
 from fastapi import WebSocket
@@ -105,15 +106,24 @@ video_manager = VideoManager()
 
 _frame_lock = threading.Lock()
 _current_frame: bytes | None = None
+_last_frame_ts: float = 0.0
 
 
 def set_current_frame(jpeg_bytes: bytes) -> None:
     """Guarda el ultimo frame JPEG recibido del proceso de vision (via /ws/ingest)."""
-    global _current_frame
+    global _current_frame, _last_frame_ts
     with _frame_lock:
         _current_frame = jpeg_bytes
+        _last_frame_ts = time.monotonic()
 
 
 def get_current_frame() -> bytes | None:
     with _frame_lock:
         return _current_frame
+
+
+def frames_flowing(within: float = 3.0) -> bool:
+    """True si la vision empujo un frame hace menos de `within` segundos -> hay un
+    proceso de vision vivo (lo lanzamos nosotros o lo arrancaron aparte)."""
+    with _frame_lock:
+        return _last_frame_ts > 0 and (time.monotonic() - _last_frame_ts) < within

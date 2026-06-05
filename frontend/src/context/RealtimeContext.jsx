@@ -112,6 +112,8 @@ function reducer(state, action) {
           backend:     action.data.backend_connected ? "Backend conectado" : "Desconectado",
           fps:         action.data.fps ?? state.systemStatus.fps,
           currentTime: action.data.current_time ?? state.systemStatus.currentTime,
+          sourceType:  action.data.source_type ?? state.systemStatus.sourceType,
+          sourceName:  action.data.source_name ?? state.systemStatus.sourceName,
         },
       };
 

@@ -19,6 +19,8 @@ Rutas:
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -38,7 +40,7 @@ from .mailer import (
     email_enabled, set_email_enabled,
 )
 from .runtime import get_runtime, set_runtime
-from .realtime import get_current_frame, set_current_frame, manager, video_manager
+from .realtime import get_current_frame, set_current_frame, manager, video_manager, frames_flowing
 from .events_db import fetch_eventos, fetch_evento, _row_to_payload, approve_evento, reject_evento
 from .fuzzy import EXCESO, REINCI, SEVERIDAD, RULES, LIMITE_VELOCIDAD as FZ_LIMITE, UMBRAL_TEMERARIA as FZ_UMBRAL
 
@@ -364,6 +366,84 @@ def set_speed_boost(body: SpeedBoostRequest) -> dict:
     Lo lee el proceso de vision al capturar cada evento (storage/runtime_config.json)."""
     rc = set_runtime(speed_boost_enabled=bool(body.enabled), speed_boost_kmh=float(body.kmh))
     return {"enabled": rc["speed_boost_enabled"], "kmh": rc["speed_boost_kmh"]}
+
+
+# ── Proceso de vision lanzado BAJO DEMANDA (el frontend no toca start_vision.ps1) ──
+_BACKEND_DIR = Path(__file__).resolve().parents[2]   # .../backend
+_vision_proc: "subprocess.Popen | None" = None
+
+
+def _ensure_vision_running() -> bool:
+    """Lanza el proceso de vision (con el mismo Python del venv) si no esta corriendo
+    ni empujando frames. Devuelve True si lo acaba de lanzar (tarda ~15 s en cargar
+    modelos). Si ya hay vision viva, no hace nada -> el hot-swap se encarga del cambio."""
+    global _vision_proc
+    if _vision_proc is not None and _vision_proc.poll() is None:
+        return False
+    if frames_flowing(3.0):
+        return False
+    try:
+        _vision_proc = subprocess.Popen([sys.executable, "-m", "src.vision.main"],
+                                        cwd=str(_BACKEND_DIR))
+        print(f"[VISION] proceso lanzado bajo demanda (pid {_vision_proc.pid})")
+        return True
+    except Exception as exc:
+        print(f"[VISION] no se pudo lanzar: {exc}")
+        return False
+
+
+class SourceRequest(BaseModel):
+    source: str   # nombre de archivo en Videos_Carros, o "live"
+
+
+@app.post("/api/source")
+def set_source(body: SourceRequest) -> dict:
+    """Fuente directa: 'live' (camara) o una ruta absoluta. Usado por el boton EN VIVO."""
+    val = (body.source or "").strip().strip('"')
+    if val.lower() == "live":
+        val = "live"
+    else:
+        if not Path(val).is_file():
+            raise HTTPException(status_code=404, detail=f"No existe el archivo: {val}")
+        val = str(Path(val).resolve())
+    rc = get_runtime()
+    rc = set_runtime(source=val, source_version=int(rc.get("source_version", 0)) + 1)
+    launched = _ensure_vision_running()
+    return {"source": rc["source"], "source_version": rc["source_version"], "vision_launched": launched}
+
+
+# Explorador nativo de Windows via PowerShell (OpenFileDialog) -> sin depender de
+# tkinter (que no esta instalado). -STA es obligatorio para los dialogos de WinForms.
+_BROWSE_PS = (
+    "Add-Type -AssemblyName System.Windows.Forms;"
+    "$f = New-Object System.Windows.Forms.OpenFileDialog;"
+    "$f.Title = 'Elige un video para reproducir';"
+    "$f.Filter = 'Videos|*.mp4;*.avi;*.mov;*.mkv;*.webm|Todos|*.*';"
+    "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.FileName }"
+)
+
+
+@app.post("/api/source/browse")
+def browse_source() -> dict:
+    """Abre el EXPLORADOR DE ARCHIVOS nativo de Windows (en la maquina del backend =
+    la del usuario, app local) para elegir un video de SU PC, sin teclear ni subir.
+    El video elegido pasa a ser la fuente de la vision (hot-swap)."""
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-Command", _BROWSE_PS],
+            capture_output=True, text=True, timeout=300)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo abrir el explorador: {exc}")
+    path = (out.stdout or "").strip()
+    if not path:
+        return {"cancelled": True}
+    if not Path(path).is_file():
+        raise HTTPException(status_code=404, detail=f"No existe: {path}")
+    rc = get_runtime()
+    rc = set_runtime(source=str(Path(path).resolve()), source_version=int(rc.get("source_version", 0)) + 1)
+    launched = _ensure_vision_running()
+    return {"source": rc["source"], "source_version": rc["source_version"],
+            "name": Path(path).name, "vision_launched": launched}
 
 
 class TestEmailRequest(BaseModel):

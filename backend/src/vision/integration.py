@@ -32,12 +32,15 @@ def broadcast_event(payload: dict) -> None:
     bridge.send_event(payload)
 
 
-def broadcast_status(fps: float, camera_connected: bool = True) -> None:
+def broadcast_status(fps: float, source_type: str = None, source_name: str = None,
+                     camera_connected: bool = True) -> None:
     bridge.send_status({
         "fps": round(fps, 1),
         "camera_connected": camera_connected,
         "backend_connected": True,
         "current_time": datetime.datetime.now().strftime("%H:%M:%S"),
+        "source_type": source_type,   # "video" | "live"
+        "source_name": source_name,   # nombre del video o "EN VIVO"
     })
 
 

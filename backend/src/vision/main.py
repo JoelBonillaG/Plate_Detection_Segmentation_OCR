@@ -65,8 +65,20 @@ if __name__ == "__main__":
     def detectar_en_vivo(frame):
         return cadena.detectar_placa_en_vivo(frame, modelos)
 
-    # fuente: config (null -> camara_idx) ; el argumento CLI siempre tiene prioridad.
+    # fuente: config (null -> camara_idx).
     fuente = CAMARA_IDX if _cfg.get("fuente") is None else _cfg["fuente"]
+    # la fuente elegida desde el FRONTEND (runtime_config.json) manda sobre el config:
+    # asi, cuando el API lanza la vision bajo demanda, arranca con el video elegido.
+    try:
+        from src.app.runtime import get_runtime
+        _src = get_runtime().get("source")
+        if _src == "live":
+            fuente = CAMARA_IDX
+        elif _src:
+            fuente = _src
+    except Exception:
+        pass
+    # el argumento CLI manda sobre todo (start_vision.ps1 "ruta\\video.mp4").
     if len(sys.argv) > 1:
         arg = sys.argv[1]
         fuente = int(arg) if arg.isdigit() else arg

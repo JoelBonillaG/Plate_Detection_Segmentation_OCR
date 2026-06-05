@@ -3,7 +3,7 @@ import {
   Activity, ArrowLeft, BadgeCheck, Bell, Camera, Car, Check, CheckCircle2,
   ChevronLeft, ChevronRight, CircleAlert, ClipboardList, Clock3, Cpu,
   Database, Eye, FileText, Filter, Gauge, GitBranch, Info, LayoutDashboard,
-  Lock, Mail, Maximize2, Minimize2, Menu, Minus, Search, Settings, ShieldAlert, SlidersHorizontal,
+  Lock, Mail, Maximize2, Minimize2, Menu, Minus, Play, Search, Settings, ShieldAlert, SlidersHorizontal,
   Unlock, UserRound, Wifi, WifiOff, X, Zap,
 } from "lucide-react";
 import { useRealtime } from "./context/RealtimeContext.jsx";
@@ -257,7 +257,7 @@ function Topbar({ connected, onOpenDetail }) {
   return (
     <header className="topbar">
       <StatusPill icon={CheckCircle2} label="Sistema" value={systemStatus.system}     tone="green" />
-      <StatusPill icon={Camera}       label="Cámara"  value="IP/Celular"              tone="cyan" />
+      <StatusPill icon={Camera}       label="Fuente"  value={systemStatus.sourceType === "live" ? "EN VIVO" : (systemStatus.sourceName || "—")} tone="cyan" />
       <StatusPill icon={Database}     label="Backend" value={systemStatus.backend}    tone="blue" />
       <StatusPill icon={Gauge}        label="FPS"     value={`${systemStatus.fps}`}   tone="red" />
       <StatusPill icon={Clock3}       label="Hora"    value={systemStatus.currentTime} tone="slate" />
@@ -399,6 +399,52 @@ function EventFeed({ events, onOpen }) {
   );
 }
 
+// Badge de fuente: EN VIVO (cámara) o VIDEO · nombre, desde el status real.
+function SourceBadge() {
+  const { systemStatus } = useRealtime();
+  const t = systemStatus.sourceType, n = systemStatus.sourceName;
+  if (!t) return null;
+  return t === "live"
+    ? <span className="src-badge live"><span className="src-dot" /> EN VIVO</span>
+    : <span className="src-badge video" title={n}>VIDEO · {n}</span>;
+}
+
+// Selector de fuente: botón que abre el EXPLORADOR de la PC (sin teclear rutas) + EN VIVO.
+function SourcePicker() {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const post = async (url, body) => {
+    setBusy(true); setMsg(url.endsWith("browse") ? "Abriendo explorador…" : "");
+    let delay = 4000;
+    try {
+      const r = await fetch(`${API}${url}`, body
+        ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+        : { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail ?? "Error");
+      if (d.cancelled) setMsg("");
+      else if (d.vision_launched) { setMsg("Iniciando visión… (~15 s la primera vez)"); delay = 16000; }
+      else setMsg(body?.source === "live" ? "Cambiando a EN VIVO…" : `Reproduciendo ${d.name ?? ""}…`);
+    } catch (e) { setMsg(e.message); }
+    finally { setBusy(false); setTimeout(() => setMsg(""), delay); }
+  };
+
+  return (
+    <div className="source-picker">
+      <button className="source-btn play" disabled={busy}
+              onClick={() => post("/api/source/browse")} title="Buscar un video en tu PC">
+        <Play size={14} /> {busy ? "…" : "Elegir video"}
+      </button>
+      <button className="source-btn live" disabled={busy}
+              onClick={() => post("/api/source", { source: "live" })} title="Cámara en vivo">
+        EN VIVO
+      </button>
+      {msg && <span className="source-msg">{msg}</span>}
+    </div>
+  );
+}
+
 function VideoPanel({ videoUrl, event }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -467,11 +513,13 @@ function VideoPanel({ videoUrl, event }) {
 
   return (
     <div className="card">
-      <div className="card-header">
+      <div className="card-header video-card-header">
         <div className="card-header-left">
           <div className="live-dot" />
           <span style={{ fontSize: ".875rem", fontWeight: 700 }}>Video en vivo</span>
+          <SourceBadge />
         </div>
+        <SourcePicker />
       </div>
       <div className="video-frame" ref={containerRef}>
         <canvas ref={canvasRef} />
@@ -693,7 +741,7 @@ function DetailPage({ event, onBack, onDash, onEvents }) {
 
 function EventHeroStrip({ event }) {
   const over   = event.speed > event.speedLimit;
-  const excess = event.speed - event.speedLimit;
+  const excess = Math.round((event.speed - event.speedLimit) * 10) / 10;
   return (
     <div className="event-hero-strip">
       <div className="hero-top-row">
@@ -749,7 +797,7 @@ function ReviewModal({ event, onClose }) {
 
   const cropImg = event.images?.plateStraight ?? event.images?.plateDetected ?? event.images?.plate;
   const over    = event.speed > event.speedLimit;
-  const excess  = event.speed - event.speedLimit;
+  const excess  = Math.round((event.speed - event.speedLimit) * 10) / 10;
 
   const call = async (action) => {
     setStatus("loading"); setMsg("");
@@ -864,8 +912,9 @@ function ReviewModal({ event, onClose }) {
 
 function ResumenTab({ event }) {
   const over   = event.speed > event.speedLimit;
-  const excess = event.speed - event.speedLimit;
+  const excess = Math.round((event.speed - event.speedLimit) * 10) / 10;
   const [reviewOpen, setReviewOpen] = useState(false);
+  const cropImg = event.images?.plateStraight ?? event.images?.plateDetected ?? event.images?.plate;
 
   return (
     <div className="tab-panel">
@@ -876,10 +925,18 @@ function ResumenTab({ event }) {
             <div className="card-header">
               <div className="card-header-left"><Eye size={16} /><h2>Evidencia del evento</h2></div>
             </div>
-            <div className="evidence-images">
+            <div className="evidence-images" style={cropImg ? undefined : { gridTemplateColumns: "1fr" }}>
               <div className="main-img-wrap">
                 <img src={event.images.frame} alt="Vehículo detectado" />
               </div>
+              {cropImg && (
+                <div className="plate-img-wrap">
+                  <img src={cropImg} alt="Placa detectada" />
+                  <span style={{ fontSize: ".72rem", color: "var(--muted)", textAlign: "center" }}>
+                    Placa leída · {event.plateOcr}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

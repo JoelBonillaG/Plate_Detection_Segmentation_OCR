@@ -19,6 +19,11 @@ _FILE = Path(__file__).resolve().parents[3] / "storage" / "runtime_config.json"
 _DEFAULT = {
     "speed_boost_enabled": False,
     "speed_boost_kmh": 0.0,
+    # fuente de video que la vision debe usar (hot-swap sin reiniciar el proceso).
+    # source = ruta absoluta del .mp4 o "live"; source_version se incrementa en cada
+    # cambio -> la vision detecta el cambio y reabre la fuente.
+    "source": None,
+    "source_version": 0,
 }
 
 
