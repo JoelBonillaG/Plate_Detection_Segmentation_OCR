@@ -298,7 +298,7 @@ def approve_evento(evento_id: str, placa_corregida: str | None, motivo: str | No
             ev = cur.fetchone()
             if ev:
                 from .config import get_settings
-                engineer_email = get_settings().engineer_email
+                destino = get_settings().envio_infracciones_a
                 placa  = ev.get("placa_validada") or ev.get("placa_ocr")
                 asunto = f"[Monitoreo UTA] Sanción aprobada — Placa {placa}"
                 from .mailer import build_detection_body
@@ -329,7 +329,7 @@ def approve_evento(evento_id: str, placa_corregida: str | None, motivo: str | No
                     INSERT INTO notificaciones (evento_id, correo_destino, tipo_notificacion, asunto, mensaje)
                     VALUES (%s, %s, 'infraccion', %s, %s)
                     """,
-                    (evento_id, engineer_email, asunto, mensaje),
+                    (evento_id, destino, asunto, mensaje),
                 )
         conn.commit()
 

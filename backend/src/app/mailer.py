@@ -60,6 +60,11 @@ def send_email(payload: EmailPayload) -> None:
     _validate_smtp_settings()
     settings = get_settings()
 
+    print(f"[MAIL] enviando -> to={payload.to} subject={payload.subject!r} "
+          f"host={settings.smtp_host}:{settings.smtp_port} enc={settings.smtp_encryption} "
+          f"html={'si' if payload.html else 'no'} "
+          f"inline={len(payload.inline_images) if payload.inline_images else 0}")
+
     message = EmailMessage()
     message["From"] = settings.smtp_from
     message["To"] = payload.to
@@ -85,6 +90,7 @@ def send_email(payload: EmailPayload) -> None:
         with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context) as server:
             server.login(settings.smtp_user, settings.smtp_password)
             server.send_message(message)
+        print(f"[MAIL] OK -> {payload.to} (SSL)")
         return
 
     with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
@@ -92,6 +98,7 @@ def send_email(payload: EmailPayload) -> None:
             server.starttls(context=ssl.create_default_context())
         server.login(settings.smtp_user, settings.smtp_password)
         server.send_message(message)
+    print(f"[MAIL] OK -> {payload.to} ({settings.smtp_encryption})")
 
 
 def build_detection_body(data: dict) -> str:
@@ -188,7 +195,7 @@ _RIESGO_COLOR = {"alto": "#c0392b", "medio": "#e67e22", "bajo": "#27ae60"}
 
 # (cid, titulo, fuente_en_data) -> de donde sale la ruta relativa de cada etapa
 _ETAPAS = [
-    ("frame",           "1. Vehículo",        ("imagen_frame",)),
+    ("frame",           "1. Imagen capturada", ("imagen_frame",)),
     ("placa_detectada", "2. Placa detectada", ("vision", "ruta_placa_detectada")),
     ("segmentacion",    "3. Segmentación",    ("vision", "ruta_segmentacion")),
 ]

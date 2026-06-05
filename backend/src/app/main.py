@@ -126,7 +126,7 @@ def _autosend_email(event: dict) -> None:
     try:
         time.sleep(0.6)
         from .config import get_settings
-        to = get_settings().engineer_email
+        to = get_settings().envio_infracciones_a
         if not to:
             return
         html, image_map = build_detection_html(event)
@@ -266,12 +266,14 @@ def approve_event(evento_id: str, body: ReviewRequest) -> dict:
     # Kill-switch: si el correo esta apagado (p.ej. probando con video) NO se envia.
     # La notificacion queda 'pendiente' y se puede mandar luego con /notifications/send-pending.
     if not email_enabled():
+        print(f"[MAIL] evento {evento_id} aprobado pero correo OFF -> notificacion en cola.")
         return {"status": "approved", "email-sent": 0, "email-skipped": True}
 
     sent = failed = 0
     try:
         notifs = fetch_pending_notifications(limit=1)
         notifs = [n for n in notifs if str(n.get("evento_id")) == evento_id]
+        print(f"[MAIL] evento {evento_id} aprobado -> {len(notifs)} notificacion(es) por enviar.")
         # evento completo -> HTML con proceso de vision (imagenes inline) + difuso
         ev_row = fetch_evento(evento_id)
         ev = _row_to_payload(ev_row) if ev_row else None
@@ -292,11 +294,13 @@ def approve_event(evento_id: str, body: ReviewRequest) -> dict:
                 mark_notification_sent(str(n["id"]))
                 sent += 1
             except Exception as exc:
+                print(f"[MAIL] FALLO -> {n.get('correo_destino')}: {exc}")
                 mark_notification_error(str(n["id"]), str(exc))
                 failed += 1
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[MAIL] error inesperado en el envio: {exc}")
 
+    print(f"[MAIL] resumen evento {evento_id}: enviados={sent} fallidos={failed}")
     return {"status": "approved", "email-sent": sent, "email-failed": failed}
 
 
@@ -456,15 +460,18 @@ def _ensure_vision_running() -> bool:
 
 
 class SourceRequest(BaseModel):
-    source: str   # nombre de archivo en Videos_Carros, o "live"
+    source: str   # "live" (camara configurada), un indice de camara ("0","1",...) o ruta
 
 
 @app.post("/api/source")
 def set_source(body: SourceRequest) -> dict:
-    """Fuente directa: 'live' (camara) o una ruta absoluta. Usado por el boton EN VIVO."""
+    """Fuente directa: 'live' (camara configurada), un INDICE de camara ('0','1',...)
+    o una ruta de video. Usado por los botones EN VIVO / cámara #."""
     val = (body.source or "").strip().strip('"')
     if val.lower() == "live":
         val = "live"
+    elif val.isdigit():
+        val = val           # indice de camara explicito -> la vision lo abre como webcam
     else:
         if not Path(val).is_file():
             raise HTTPException(status_code=404, detail=f"No existe el archivo: {val}")
@@ -473,6 +480,16 @@ def set_source(body: SourceRequest) -> dict:
     rc = set_runtime(source=val, source_version=int(rc.get("source_version", 0)) + 1)
     launched = _ensure_vision_running()
     return {"source": rc["source"], "source_version": rc["source_version"], "vision_launched": launched}
+
+
+@app.post("/api/source/stop")
+def stop_source() -> dict:
+    """DETIENE la fuente actual (video o en vivo): la vision suelta la camara y deja de
+    procesar, pero el proceso sigue vivo (modelos en memoria) -> reanudar es instantaneo.
+    No relanza la vision: si no hay proceso, no hay nada que detener."""
+    rc = get_runtime()
+    rc = set_runtime(source="idle", source_version=int(rc.get("source_version", 0)) + 1)
+    return {"source": rc["source"], "source_version": rc["source_version"], "stopped": True}
 
 
 # Explorador nativo de Windows via PowerShell (OpenFileDialog) -> sin depender de
@@ -529,15 +546,20 @@ def send_test_email(payload: TestEmailRequest) -> dict:
 @app.post("/notifications/send-pending")
 def send_pending_notifications(limit: int = 10) -> dict:
     if not email_enabled():
+        print("[MAIL] send-pending: correo OFF -> nada que enviar.")
         return {"status": "skipped", "sent": 0, "failed": 0, "reason": "correo apagado"}
     sent = failed = 0
-    for n in fetch_pending_notifications(limit=limit):
+    pendientes = fetch_pending_notifications(limit=limit)
+    print(f"[MAIL] send-pending: {len(pendientes)} pendiente(s) en cola.")
+    for n in pendientes:
         body = n.get("mensaje", "")
         try:
             send_email(EmailPayload(to=n["correo_destino"], subject=n["asunto"], body=body))
             mark_notification_sent(str(n["id"]))
             sent += 1
         except Exception as exc:
+            print(f"[MAIL] FALLO -> {n.get('correo_destino')}: {exc}")
             mark_notification_error(str(n["id"]), str(exc))
             failed += 1
+    print(f"[MAIL] send-pending resumen: enviados={sent} fallidos={failed}")
     return {"status": "processed", "sent": sent, "failed": failed}

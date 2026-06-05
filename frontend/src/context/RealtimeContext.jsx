@@ -133,6 +133,20 @@ function reducer(state, action) {
       };
     }
 
+    case "REVIEWED": {
+      // tras aprobar/rechazar: refleja el nuevo estado en el evento local para que
+      // el boton "Revisar" desaparezca y no se pueda reenviar el correo del mismo evento.
+      const patch = e => (e && e.id === action.id
+        ? { ...e, reviewStatus: action.status,
+            plateValidated: action.plate ?? e.plateValidated }
+        : e);
+      return {
+        ...state,
+        events: state.events.map(patch),
+        latestEvent: patch(state.latestEvent),
+      };
+    }
+
     default:
       return state;
   }
@@ -182,7 +196,11 @@ export function RealtimeProvider({ children }) {
     };
   }, []);
 
-  const value = { ...state, videoUrl: VIDEO_WS_URL };
+  // marca un evento como revisado (aprobado/rechazado) en el estado local.
+  const markReviewed = useCallback((id, status, plate) =>
+    dispatch({ type: "REVIEWED", id, status, plate }), []);
+
+  const value = { ...state, videoUrl: VIDEO_WS_URL, markReviewed };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
