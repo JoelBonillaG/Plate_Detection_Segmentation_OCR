@@ -1,0 +1,55 @@
+dataset_ocr
+dataset_ocr_sintetico
+License Plate Recognition.v13i.retinanet
+License Plate Recognition.v13i.tensorflow
+License Plate Recognition.v13i.yolov11
+lpr character segmentation.v3i.yolov11
+Modelo_DeteccionPlacasEc.v3i.yolov12
+Plate_Detection_Segmentation_OCR-main
+Plates Ecuadorian.v3i.yolov11
+Tesis-Placas.v4-yolov4-darknet.retinanet
+Tesis-Placas.v4-yolov4-darknet.tensorflow
+Tesis-Placas.v4-yolov4-darknet.yolov11
+Tesis-Placas.v4-yolov4-darknet.yolov12
+test_resultados
+**.zip
+**.docx
+*venv
+*env
+mmtest
+Car detector.v1i.yolov11
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Imagenes: ignora todas (salidas del pipeline + graficas de entreno)
+*.jpg
+*.jpeg
+*.png
+backend/src/vision/pipeline/ocr/salidas/**
+storage/**
+
+# Capturas en vivo: salida del sistema (carpetas por carro + datos.json), no versionar
+backend/src/vision/camara/capturas/**
+*mp4
+
+# Recortes/tests de segmentacion generados (regenerables con crop_ecuador_plates.py):
+# incluye labels .txt que el ignore de imagenes no cubre.
+**/Test_Placas_Ecuador/
+**/ecuador_real_crops/
+**/test_resultados/
+**/test_resultados_old/
+
+# Preview de correo generado localmente
+_email_preview.html
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite-cache/
+frontend/vite-dev.log
+frontend/vite-dev.err
+!frontend/public/mock/*.png

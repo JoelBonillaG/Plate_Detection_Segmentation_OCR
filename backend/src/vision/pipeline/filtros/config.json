@@ -1,0 +1,11 @@
+{
+  "salidas": "filtradas",
+  "suavizar": true,
+  "suavizar_d": 5,
+  "suavizar_sigma": 50,
+  "acentuar": true,
+  "acentuar_amount": 0.5,
+  "acentuar_sigma": 1.5,
+  "agrandar": false,
+  "agrandar_factor": 2.0
+}

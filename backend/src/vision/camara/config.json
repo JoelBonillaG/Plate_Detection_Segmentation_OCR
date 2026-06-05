@@ -1,0 +1,41 @@
+{
+  "camara_idx": 2,
+  "ventana_w": 1280,
+  "ventana_h": 720,
+  "stream_w": 640,
+  "stream_jpeg_q": 60,
+  "linea_entra": [
+    [
+      0.43125,
+      0.4722222222222222
+    ],
+    [
+      0.696875,
+      0.6902777777777778
+    ]
+  ],
+  "linea_sale": [
+    [
+      0.584375,
+      0.95
+    ],
+    [
+      0.11953125,
+      0.55
+    ]
+  ],
+  "min_ancho_px": 60,
+  "max_ancho_px": 0,
+  "min_nitidez": 40,
+  "distancia_m": 5.0,
+  "fps_fallback": 30.0,
+  "inferencia_cada": 1,
+  "detectar_carros": false,
+  "tolerancia_carro": 3,
+  "tolerancia_placa": 8,
+  "calibrar": true,
+  "mostrar_ventana": true,
+  "reconectar": true,
+  "espera_entre_reintentos_s": 2.0,
+  "frames_antes_de_reconectar": 30
+}

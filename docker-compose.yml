@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: monitoreo_vehicular_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-monitoreo_vehicular}
+      POSTGRES_USER: ${POSTGRES_USER:-monitoreo_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monitoreo_pass}
+      TZ: ${TZ:-America/Guayaquil}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:${POSTGRES_CONTAINER_PORT:-5432}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # init.sql crea el esquema completo; las migraciones (idempotentes) corren
+      # despues, en orden, sobre un volumen nuevo. Ambas en docker-entrypoint-initdb.d.
+      - ./backend/database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./backend/database/migration_rutas_etapas.sql:/docker-entrypoint-initdb.d/02-migration_rutas_etapas.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
