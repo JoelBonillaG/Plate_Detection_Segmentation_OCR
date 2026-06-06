@@ -24,6 +24,9 @@ _DEFAULT = {
     # cambio -> la vision detecta el cambio y reabre la fuente.
     "source": None,
     "source_version": 0,
+    # config_version sube cuando el frontend calibra lineas/distancia (camara/config.json):
+    # la vision lo detecta y recrea la zona en caliente, sin reiniciar.
+    "config_version": 0,
 }
 
 

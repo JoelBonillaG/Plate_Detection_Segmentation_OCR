@@ -80,8 +80,8 @@ CFG = cargar_config()
 
 # paleta BGR (constantes visuales, no son configuracion). Tono "slate" sobrio,
 # texto anti-aliasing y paneles semi-transparentes -> overlay limpio y legible.
-COLOR_ENTRA   = (255, 176, 0)    # azul-cian: linea LEJANA (entra)
-COLOR_SALE    = (140, 210, 64)   # verde-teal: linea CERCANA (sale)
+COLOR_ENTRA   = (94, 197, 34)    # verde (#22c55e): linea LEJANA (entra)
+COLOR_SALE    = (68, 68, 239)    # rojo  (#ef4444): linea CERCANA (sale)
 COLOR_TRACK   = (96, 220, 130)   # verde: zona rastreando (acento activo)
 COLOR_PLACA   = (96, 200, 96)    # verde: caja de la placa
 COLOR_CARRO   = (200, 144, 56)   # azul acero: caja del carro
@@ -165,14 +165,11 @@ def dibujar_lineas(frame, zona: ZonaDeteccion, calibrar=False):
     s1, s2 = zona.sale_px(w, h)
 
     rastreando = zona.estado == "rastreando"
-    col_e = COLOR_TRACK if rastreando else COLOR_ENTRA
-    col_s = COLOR_TRACK if rastreando else COLOR_SALE
 
-    cv2.line(frame, e1, e2, col_e, 2, cv2.LINE_AA)
-    cv2.line(frame, s1, s2, col_s, 2, cv2.LINE_AA)
-
-    _chip(frame, "ENTRA", (e1[0] + 6, e1[1] + 6), col_e)
-    _chip(frame, "SALE",  (s1[0] + 6, s1[1] + 6), col_s)
+    # color fijo distingue cada linea (verde=ENTRA, rojo=SALE); sin etiquetas de texto.
+    # El estado rastreando/esperando se ve en la pildora de abajo-izquierda.
+    cv2.line(frame, e1, e2, COLOR_ENTRA, 2, cv2.LINE_AA)
+    cv2.line(frame, s1, s2, COLOR_SALE, 2, cv2.LINE_AA)
 
     # puntos arrastrables (solo calibracion): relleno + anillo blanco
     if calibrar:
@@ -480,6 +477,28 @@ def _leer_fuente_runtime():
     return fuente, ver
 
 
+def _leer_config_version():
+    """config_version desde runtime_config.json: sube cada vez que el frontend calibra
+    las lineas/distancia -> el loop recrea la zona en caliente (sin reiniciar)."""
+    try:
+        with open(_RUNTIME_FILE, encoding="utf-8") as f:
+            return int(json.load(f).get("config_version", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _zona_desde_config(tolerancia, rastrear_por):
+    """Crea una ZonaDeteccion leyendo las lineas + distancia FRESCAS de config.json.
+    Asi el calibrador del frontend (que escribe config.json) se aplica al recrear."""
+    cfg = cargar_config()
+    return ZonaDeteccion(
+        linea_entra=_par_lineas(cfg["linea_entra"]),
+        linea_sale=_par_lineas(cfg["linea_sale"]),
+        min_ancho_px=cfg["min_ancho_px"], max_ancho_px=cfg["max_ancho_px"],
+        min_nitidez=cfg["min_nitidez"], distancia_m=float(cfg["distancia_m"]),
+        tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
+
+
 def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             fuente=CAMARA_IDX, on_frame=None, on_fps=None):
     """
@@ -527,10 +546,7 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
 
     rastrear_por = "carro" if DETECTAR_CARROS else "placa"
     tolerancia   = TOLERANCIA_CARRO if DETECTAR_CARROS else TOLERANCIA_PLACA
-    zona = ZonaDeteccion(linea_entra=LINEA_ENTRA, linea_sale=LINEA_SALE,
-                         min_ancho_px=MIN_ANCHO_PX, max_ancho_px=MAX_ANCHO_PX,
-                         min_nitidez=MIN_NITIDEZ, distancia_m=DISTANCIA_M,
-                         tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
+    zona = _zona_desde_config(tolerancia, rastrear_por)
     capturas_guardadas = 0
 
     # guardar captura (3 imwrite + json + pipeline OCR) en un hilo aparte: asi NO
@@ -572,6 +588,7 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     fuente_actual = fuente
     _rt = _leer_fuente_runtime()
     source_version = _rt[1] if _rt else 0    # arranca sincronizado: no swap inmediato
+    config_version = _leer_config_version()  # arranca sincronizado: no reload inmediato
     if en_idle:
         source_type, source_name = "idle", "DETENIDO"
     elif es_archivo:
@@ -604,10 +621,7 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
                 fps = fuente_video.get_fps()
                 if not fps or fps <= 0:
                     fps = FPS_FALLBACK
-                zona = ZonaDeteccion(linea_entra=LINEA_ENTRA, linea_sale=LINEA_SALE,
-                                     min_ancho_px=MIN_ANCHO_PX, max_ancho_px=MAX_ANCHO_PX,
-                                     min_nitidez=MIN_NITIDEZ, distancia_m=DISTANCIA_M,
-                                     tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
+                zona = _zona_desde_config(tolerancia, rastrear_por)
                 t_video_inicio = None
                 n_frame = 0
                 ultima_version = -1
@@ -616,6 +630,15 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
                 source_name = os.path.basename(str(fuente_actual)) if es_archivo else "EN VIVO"
                 print(f"[FUENTE] cambiada -> {source_name} ({source_type})")
                 continue
+
+            # ── hot-reload de CALIBRACION (lineas/distancia) desde el frontend ──
+            cv_new = _leer_config_version()
+            if cv_new != config_version:
+                config_version = cv_new
+                if not en_idle and fuente_video is not None:
+                    zona = _zona_desde_config(tolerancia, rastrear_por)
+                    carro_bbox = bbox = None
+                print(f"[CONFIG] lineas/distancia recargadas (v{config_version})")
 
         # ── DETENIDO (idle): no hay camara. Emitir status ~1/s y dormir. ──
         if en_idle:

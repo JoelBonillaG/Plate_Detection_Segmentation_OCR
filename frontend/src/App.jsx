@@ -406,13 +406,26 @@ function SourceBadge() {
     : <span className="src-badge video" title={n}>VIDEO · {n}</span>;
 }
 
-// Selector de fuente: EXPLORADOR de la PC + EN VIVO (con índice de cámara opcional) + DETENER.
+// Selector de fuente: UN solo desplegable 'Fuente' con todo (en vivo por nombre de
+// cámara, elegir video, detener). Mantiene el header del panel limpio.
 function SourcePicker() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [camIdx, setCamIdx] = useState("");   // índice de cámara opcional para EN VIVO
+  const [open, setOpen] = useState(false);
+  const [cams, setCams] = useState([]);     // [{index, name}] desde /api/cameras
+  const [camSel, setCamSel] = useState(""); // índice de la cámara activa (para el ◉)
+
+  // escanea las cámaras conectadas (por nombre, vía pygrabber en el backend)
+  const cargarCams = () => {
+    fetch(`${API}/api/cameras`)
+      .then(r => r.json())
+      .then(d => setCams(Array.isArray(d.cameras) ? d.cameras : []))
+      .catch(() => setCams([]));
+  };
+  useEffect(() => { cargarCams(); }, []);
 
   const post = async (url, body) => {
+    setOpen(false);
     setBusy(true);
     setMsg(url.endsWith("browse") ? "Abriendo explorador…"
          : url.endsWith("stop")   ? "Deteniendo…" : "");
@@ -428,39 +441,89 @@ function SourcePicker() {
       else if (d.stopped) setMsg("Detenido — cámara liberada.");
       else if (d.vision_launched) { setMsg("Iniciando visión… (~15 s la primera vez)"); delay = 16000; }
       else if (s === "live") setMsg("Cambiando a EN VIVO…");
-      else if (/^\d+$/.test(String(s))) setMsg(`Cámara #${s}…`);
+      else if (/^\d+$/.test(String(s))) {
+        const cam = cams.find(c => String(c.index) === String(s));
+        setMsg(cam ? `Cámara: ${cam.name}…` : `Cámara #${s}…`);
+      }
       else setMsg(`Reproduciendo ${d.name ?? ""}…`);
     } catch (e) { setMsg(e.message); }
     finally { setBusy(false); setTimeout(() => setMsg(""), delay); }
   };
 
-  // EN VIVO: con índice -> esa cámara; vacío -> la configurada en camara/config.json.
-  const goLive = () => {
-    const idx = camIdx.trim();
-    post("/api/source", { source: idx === "" ? "live" : idx });
+  const elegirCamara = idx => { setCamSel(String(idx)); post("/api/source", { source: String(idx) }); };
+  const usarConfig   = ()  => { setCamSel(""); post("/api/source", { source: "live" }); };
+
+  const item = {
+    display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left",
+    padding: "7px 12px", background: "none", border: "none", cursor: "pointer",
+    fontSize: ".82rem", color: "var(--text, #1e293b)", borderRadius: 6,
   };
+  const radio = on => ({ color: on ? "var(--uta-red, #c12028)" : "var(--muted, #94a3b8)", width: 14 });
 
   return (
-    <div className="source-picker">
-      <button className="source-btn play" disabled={busy}
-              onClick={() => post("/api/source/browse")} title="Buscar un video en tu PC">
-        <Play size={14} /> {busy ? "…" : "Elegir video"}
+    <div className="source-picker" style={{ position: "relative" }}>
+      <button disabled={busy}
+              onClick={() => { setOpen(o => !o); if (!open) cargarCams(); }}
+              title="Elegir la fuente de video"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "7px 14px", borderRadius: 8, cursor: busy ? "default" : "pointer",
+                background: open ? "var(--uta-red, #c12028)" : "#fff",
+                color: open ? "#fff" : "var(--text, #1e293b)",
+                border: "1px solid " + (open ? "var(--uta-red, #c12028)" : "var(--border, #cbd5e1)"),
+                fontSize: ".82rem", fontWeight: 600, opacity: busy ? 0.6 : 1,
+                boxShadow: "0 1px 2px rgba(0,0,0,.05)",
+              }}>
+        <Camera size={15} /> {busy ? "…" : "Fuente"} <span style={{ fontSize: ".7rem" }}>▾</span>
       </button>
-      <button className="source-btn live" disabled={busy}
-              onClick={goLive} title="Cámara en vivo (usa el índice si lo escribes)">
-        EN VIVO
-      </button>
-      <input className="source-cam-idx" type="number" min="0" step="1" placeholder="cám #"
-             value={camIdx} disabled={busy}
-             onChange={e => setCamIdx(e.target.value)}
-             title="Índice de cámara opcional (vacío = la configurada). DroidCam suele ser 1."
-             style={{ width: 56, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border)",
-                      fontSize: ".78rem", textAlign: "center" }} />
-      <button className="source-btn stop" disabled={busy}
-              onClick={() => post("/api/source/stop")} title="Detener: libera la cámara (la visión sigue lista)"
-              style={{ background: "var(--uta-red, #c12028)", color: "#fff" }}>
-        <Minus size={14} /> Detener
-      </button>
+
+      {open && (
+        <>
+          {/* capa para cerrar al hacer clic fuera */}
+          <div onClick={() => setOpen(false)}
+               style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+          <div style={{
+            position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 50,
+            minWidth: 220, background: "#fff", border: "1px solid var(--border, #e2e8f0)",
+            borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,.14)", padding: 5,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: "6px 12px 2px", fontSize: ".68rem", fontWeight: 700,
+                          letterSpacing: ".4px", color: "var(--muted, #94a3b8)" }}>
+              <span>EN VIVO</span>
+              <span onClick={cargarCams} title="Re-escanear cámaras"
+                    style={{ cursor: "pointer", fontSize: ".9rem" }}>↻</span>
+            </div>
+            {cams.length === 0 && (
+              <div style={{ ...item, color: "var(--muted, #94a3b8)", cursor: "default" }}>
+                (sin cámaras detectadas)
+              </div>
+            )}
+            {cams.map(c => (
+              <button key={c.index} style={item} onClick={() => elegirCamara(c.index)}>
+                <span style={radio(camSel === String(c.index))}>
+                  {camSel === String(c.index) ? "◉" : "○"}
+                </span>
+                {c.name || `Cámara ${c.index}`}
+              </button>
+            ))}
+            <button style={item} onClick={usarConfig}>
+              <span style={radio(camSel === "")}>{camSel === "" ? "◉" : "○"}</span>
+              Cámara (config)
+            </button>
+
+            <div style={{ borderTop: "1px solid var(--border, #e2e8f0)", margin: "5px 0" }} />
+
+            <button style={item} onClick={() => post("/api/source/browse")}>
+              <Play size={14} /> Elegir video…
+            </button>
+            <button style={{ ...item, color: "var(--uta-red, #c12028)" }}
+                    onClick={() => post("/api/source/stop")}>
+              <Minus size={14} /> Detener
+            </button>
+          </div>
+        </>
+      )}
       {msg && <span className="source-msg">{msg}</span>}
     </div>
   );
@@ -1647,28 +1710,168 @@ function StatisticsView() {
 
 /* ─── Settings ───────────────────────────────────────────── */
 
+// Calibrador de líneas ENTRA/SALE sobre el VIDEO EN VIVO: arrastra los 4 puntos y guarda.
+// Las líneas son fracciones [0..1] -> independientes de la resolución. Al guardar, la
+// visión recrea la zona EN CALIENTE (config_version), sin reiniciar.
+function LineCalibrator() {
+  const { videoUrl } = useRealtime();
+  const wrapRef = useRef(null);
+  const videoRef = useRef(null);
+  const overlayRef = useRef(null);
+  const dragRef = useRef(null);             // {linea, idx} del punto que se arrastra
+
+  const [edit, setEdit] = useState(false);
+  const [entra, setEntra] = useState([[0.30, 0.15], [0.20, 0.62]]);
+  const [sale, setSale]   = useState([[0.62, 0.28], [0.52, 0.98]]);
+  const [dist, setDist]   = useState(5.0);
+  const [msg, setMsg]     = useState("");
+
+  // cargar la calibración actual del backend
+  const cargar = () => {
+    fetch(`${API}/api/camera-config`).then(r => r.json()).then(d => {
+      if (Array.isArray(d.linea_entra)) setEntra(d.linea_entra);
+      if (Array.isArray(d.linea_sale))  setSale(d.linea_sale);
+      if (d.distancia_m) setDist(d.distancia_m);
+    }).catch(() => {});
+  };
+  useEffect(() => { cargar(); }, []);
+
+  // video en vivo -> canvas de fondo (mismo WS binario que el panel)
+  useEffect(() => {
+    let ws = null, cerrado = false, recon = null;
+    const draw = async blob => {
+      const c = videoRef.current; if (!c) return;
+      try {
+        const bmp = await createImageBitmap(blob);
+        if (c.width !== bmp.width || c.height !== bmp.height) { c.width = bmp.width; c.height = bmp.height; }
+        c.getContext("2d").drawImage(bmp, 0, 0); bmp.close?.();
+      } catch { /* frame corrupto */ }
+    };
+    const open = () => {
+      if (cerrado) return;
+      ws = new WebSocket(videoUrl); ws.binaryType = "blob";
+      ws.onmessage = ({ data }) => { if (data instanceof Blob) draw(data); };
+      ws.onclose = () => { if (!cerrado) recon = setTimeout(open, 2000); };
+      ws.onerror = () => ws?.close();
+    };
+    open();
+    return () => { cerrado = true; clearTimeout(recon); ws?.close(); };
+  }, [videoUrl]);
+
+  // dibujar líneas + handles en el overlay cuando cambian (o al redimensionar)
+  useEffect(() => {
+    const redibujar = () => {
+      const c = overlayRef.current, wrap = wrapRef.current; if (!c || !wrap) return;
+      const W = wrap.clientWidth, H = wrap.clientHeight;
+      c.width = W; c.height = H;
+      const ctx = c.getContext("2d"); ctx.clearRect(0, 0, W, H);
+      const P = p => [p[0] * W, p[1] * H];
+      const linea = (l, col) => {
+        const a = P(l[0]), b = P(l[1]);
+        ctx.strokeStyle = col; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+        if (edit) for (const pt of [a, b]) {
+          ctx.beginPath(); ctx.arc(pt[0], pt[1], 8, 0, Math.PI * 2);
+          ctx.fillStyle = "#ff3df0"; ctx.fill();
+          ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+        }
+      };
+      // sin etiquetas de texto: el color distingue cada línea (verde=ENTRA, rojo=SALE)
+      linea(entra, "#22c55e"); linea(sale, "#ef4444");
+    };
+    redibujar();
+    window.addEventListener("resize", redibujar);
+    return () => window.removeEventListener("resize", redibujar);
+  }, [entra, sale, edit]);
+
+  const frac = e => {
+    const r = overlayRef.current.getBoundingClientRect();
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+  };
+  const onDown = e => {
+    if (!edit) return;
+    const [fx, fy] = frac(e);
+    const W = overlayRef.current.width, H = overlayRef.current.height;
+    let best = null, dmin = 22;
+    for (const [name, l] of [["entra", entra], ["sale", sale]])
+      for (let i = 0; i < 2; i++) {
+        const d = Math.hypot((l[i][0] - fx) * W, (l[i][1] - fy) * H);
+        if (d < dmin) { dmin = d; best = { linea: name, idx: i }; }
+      }
+    dragRef.current = best;
+  };
+  const onMove = e => {
+    if (!edit || !dragRef.current) return;
+    const [fx, fy] = frac(e);
+    const cl = v => Math.max(0, Math.min(1, v));
+    const { linea, idx } = dragRef.current;
+    const set = linea === "entra" ? setEntra : setSale;
+    set(prev => { const n = prev.map(p => [...p]); n[idx] = [cl(fx), cl(fy)]; return n; });
+  };
+  const onUp = () => { dragRef.current = null; };
+
+  const guardar = () => {
+    setMsg("Guardando…");
+    fetch(`${API}/api/camera-config`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ linea_entra: entra, linea_sale: sale, distancia_m: Number(dist) }),
+    })
+      .then(r => r.json().then(d => {
+        if (!r.ok) throw new Error(d.detail ?? "Error");
+        setMsg("Guardado ✓ — la visión aplicó las líneas en caliente.");
+      }))
+      .catch(e => setMsg(e.message))
+      .finally(() => setTimeout(() => setMsg(""), 5000));
+  };
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="card-header-left"><Eye size={16} /><h2>Calibración de líneas (ENTRA / SALE)</h2></div>
+        <button className={`btn btn-md ${edit ? "btn-primary" : "btn-outline"}`}
+                onClick={() => setEdit(v => !v)}>
+          {edit ? "Calibrando… (clic para terminar)" : "Calibrar líneas"}
+        </button>
+      </div>
+      <div className="card-body" style={{ display: "grid", gap: 12 }}>
+        <p style={{ fontSize: ".82rem", color: "var(--muted)", margin: 0 }}>
+          Activa <b>Calibrar líneas</b> y arrastra los 4 puntos sobre el video para
+          colocar ENTRA (verde) y SALE (roja) sobre dos marcas reales de la vía.
+          Pon la <b>distancia real</b> entre ellas y guarda.
+        </p>
+        <div ref={wrapRef}
+             style={{ position: "relative", width: "100%", maxWidth: 760, aspectRatio: "16 / 9",
+                      background: "#0b1220", borderRadius: 10, overflow: "hidden",
+                      cursor: edit ? "crosshair" : "default" }}
+             onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
+          <canvas ref={videoRef}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
+          <canvas ref={overlayRef}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
+        </div>
+        <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ display: "grid", gap: 5 }}>
+            <label style={{ fontSize: ".82rem", fontWeight: 700 }}>Distancia real entre líneas (m)</label>
+            <input className="form-input" type="number" step="0.1" min="0.1" style={{ width: 140 }}
+                   value={dist} onChange={e => setDist(e.target.value)} />
+          </div>
+          <button className="btn btn-primary btn-md" onClick={guardar}>Guardar calibración</button>
+          <button className="btn btn-outline btn-md" onClick={cargar}>Descartar</button>
+          {msg && <span style={{ fontSize: ".82rem", color: "var(--muted)" }}>{msg}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsView() {
   return (
     <div className="view-stack">
       <div><h1 style={{ fontSize: "1.75rem" }}>Configuración</h1>
         <p style={{ color: "var(--muted)", fontSize: ".9rem", marginTop: 5 }}>Parámetros del sistema de monitoreo vehicular.</p>
       </div>
-      <div className="card">
-        <div style={{ display: "grid", gap: 14, maxWidth: 600, padding: 18 }}>
-          {[
-            { label: "Endpoint de video (WS)",    val: "/ws/video" },
-            { label: "WebSocket",                 val: "/ws" },
-            { label: "Límite de velocidad campus", val: "50 km/h" },
-            { label: "Umbral confianza OCR",       val: "0.85" },
-          ].map(({ label, val }) => (
-            <div key={label} style={{ display: "grid", gap: 5 }}>
-              <label style={{ fontSize: ".82rem", fontWeight: 700 }}>{label}</label>
-              <input className="form-input" defaultValue={val} />
-            </div>
-          ))}
-          <button className="btn btn-primary btn-md" style={{ width: "fit-content" }}>Guardar parámetros</button>
-        </div>
-      </div>
+
+      <LineCalibrator />
     </div>
   );
 }
