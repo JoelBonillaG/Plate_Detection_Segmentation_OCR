@@ -21,7 +21,7 @@ const REV_LABEL  = { automatica: "Automática", pendiente: "Pendiente", aprobado
 
 // Severidad crisp (0-100) -> horas de suspensión. LINEAL: horas DIRECTAMENTE
 // PROPORCIONALES a la severidad del FIS (sin curvas a mano). Debe coincidir con
-// _crisp_to_horas en backend/src/app/mailer.py.
+// _crisp_to_horas en backend/src/api/mailer.py.
 //   severidad <= 30 -> 0 (región de advertencia) · 30..100 -> 0..168 h (7 días, techo).
 function crispToHours(crisp) {
   if (crisp === null || crisp === undefined) return 0;

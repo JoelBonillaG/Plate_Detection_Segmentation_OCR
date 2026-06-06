@@ -1,1 +1,0 @@
-Tener en cuenta la matriz de confusión y aplicar reglas manuales ya que se sabe que los tres primeros caracteres son letras y los otros son números entonces con eso se puede hacer una regla de por validar para que pues validen

@@ -13,14 +13,16 @@ API publica (la usa cadena.py):
 """
 
 import os
+from pathlib import Path
 
 import cv2
 import numpy as np
 
 from .predict_char_segmentation import mask_to_boxes
 
-_AQUI       = os.path.dirname(os.path.abspath(__file__))
-_MODELO_DEF = os.path.join(_AQUI, "Models", "best_char_segmentation_unet.keras")
+_AQUI       = Path(__file__).resolve().parent
+_PROJECT_ROOT = _AQUI.parents[4]
+_MODELO_DEF = _PROJECT_ROOT / "ml" / "models" / "char_segmentation" / "Models" / "best_char_segmentation_unet.keras"
 
 # defaults espejo de los argparse de predict_char_segmentation.py
 _CFG_DEF = {
@@ -40,7 +42,7 @@ _CFG_DEF = {
 def cargar_modelo(ruta=None):
     """Carga el U-Net entrenado. Cargar una sola vez y reusar en el bucle."""
     import tensorflow as tf
-    return tf.keras.models.load_model(ruta or _MODELO_DEF, compile=False)
+    return tf.keras.models.load_model(str(ruta or _MODELO_DEF), compile=False)
 
 
 def _a_gris(img):

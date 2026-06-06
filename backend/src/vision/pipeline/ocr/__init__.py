@@ -12,25 +12,27 @@ API publica (la usa cadena.py):
 """
 
 import os
+from pathlib import Path
 
 import cv2
 import numpy as np
 
 from .test_plate import prepare_crop, load_classes
 
-_AQUI        = os.path.dirname(os.path.abspath(__file__))
+_AQUI        = Path(__file__).resolve().parent
+_PROJECT_ROOT = _AQUI.parents[4]
 # usar el .keras en formato HDF5 (legible por TF/Keras 2.10).
 # OJO: los .keras de "Respaldo Modelo/" estan en formato zip (Keras 3) y NO cargan aqui.
-_MODELO_DEF  = os.path.join(_AQUI, "Modelos", "best_cnn_ocr.keras")
-_CLASSES_DEF = os.path.join(_AQUI, "Modelos", "classes.txt")
-_SALIDAS_DEF = os.path.join(_AQUI, "salidas")
+_MODELO_DEF  = _PROJECT_ROOT / "ml" / "models" / "ocr" / "Modelos" / "best_cnn_ocr.keras"
+_CLASSES_DEF = _PROJECT_ROOT / "ml" / "models" / "ocr" / "Modelos" / "classes.txt"
+_SALIDAS_DEF = _AQUI / "salidas"
 
 
 def cargar_modelo(ruta=None, classes_path=None):
     """Carga el clasificador CNN y sus clases. Cargar una vez y reusar."""
     import tensorflow as tf
-    modelo = tf.keras.models.load_model(ruta or _MODELO_DEF, compile=False)
-    classes = load_classes(classes_path or _CLASSES_DEF)
+    modelo = tf.keras.models.load_model(str(ruta or _MODELO_DEF), compile=False)
+    classes = load_classes(str(classes_path or _CLASSES_DEF))
     return modelo, classes
 
 

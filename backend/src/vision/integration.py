@@ -45,14 +45,14 @@ def broadcast_status(fps: float, source_type: str = None, source_name: str = Non
 
 
 try:
-    from src.app.events_db import (
+    from src.api.events_db import (
         count_reincidencias,
         insert_difuso,
         insert_evento,
         insert_vision,
     )
-    from src.app.fuzzy import evaluar as fuzzy_evaluar, LIMITE_VELOCIDAD
-    from src.app.runtime import get_runtime
+    from src.api.fuzzy import evaluar as fuzzy_evaluar, LIMITE_VELOCIDAD
+    from src.api.runtime import get_runtime
 
     REALTIME_ENABLED = True
     print("[REALTIME] Integracion con FastAPI activa.")

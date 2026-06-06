@@ -84,7 +84,7 @@ def cargar_modelos(usar_filtros=False, usar_carros=True, usar_enderezado=True):
         except FileNotFoundError:
             modelo_carros = None
             print("[ETAPA 0] modelo de carros no entrenado -> fallback: placa sobre frame completo.")
-            print("          entrena con: python deteccion_carros/redes/entrenamiento.py")
+            print("          entrena con: python ml/training/vehicle_detection/redes/entrenamiento.py")
 
     return Modelos(cfg=cfg, modelo=modelo, conf=conf, cfg_filtros=cfg_filtros,
                    modelo_seg=modelo_seg, modelo_ocr=modelo_ocr, classes_ocr=classes_ocr,

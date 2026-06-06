@@ -19,6 +19,8 @@ def prepare_image(image_path, height, width):
 
 
 CHAR_ASPECT = 0.60  # ancho/alto tipico de un char de placa (digito ~0.5, letra ~0.65)
+PROJECT_ROOT = Path(__file__).resolve().parents[5]
+DEFAULT_MODEL = PROJECT_ROOT / "ml" / "models" / "char_segmentation" / "Models" / "best_char_segmentation_unet.keras"
 
 
 def split_box_by_projection(binary, x, y, w, h, expected_w):
@@ -173,7 +175,7 @@ def main():
     parser.add_argument("--image", required=True, help="Imagen de placa recortada.")
     parser.add_argument(
         "--model",
-        default="Models/best_char_segmentation_unet.keras",
+        default=str(DEFAULT_MODEL),
         help="Modelo .keras entrenado.",
     )
     parser.add_argument("--output-dir", default="debug_segmentation")

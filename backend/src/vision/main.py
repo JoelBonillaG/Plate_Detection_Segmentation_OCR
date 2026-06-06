@@ -70,7 +70,7 @@ if __name__ == "__main__":
     # la fuente elegida desde el FRONTEND (runtime_config.json) manda sobre el config:
     # asi, cuando el API lanza la vision bajo demanda, arranca con el video elegido.
     try:
-        from src.app.runtime import get_runtime
+        from src.api.runtime import get_runtime
         _src = get_runtime().get("source")
         if _src == "live":
             fuente = CAMARA_IDX

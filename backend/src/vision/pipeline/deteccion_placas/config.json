@@ -1,5 +1,5 @@
 {
-  "modelo": "modelos/placas_scratch-90000/weights/best.pt",
+  "modelo": "ml/models/plate_detection/runs/placas_scratch-90000/weights/best.pt",
   "conf_min": 0.25,
   "imgsz": 416,
   "margen": 0.08,

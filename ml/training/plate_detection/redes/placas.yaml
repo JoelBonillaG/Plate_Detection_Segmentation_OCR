@@ -1,0 +1,10 @@
+# Config de datos para YOLOv11 (formato Ultralytics).
+# Ruta relativa al repo hacia el dataset (con subcarpetas train, valid, test).
+path: ../../../datasets/raw/ecuador_plate_detection
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 1
+names:
+  0: License_Plate
