@@ -497,6 +497,89 @@ def stop_source() -> dict:
     return {"source": rc["source"], "source_version": rc["source_version"], "stopped": True}
 
 
+@app.get("/api/cameras")
+def list_cameras() -> dict:
+    """Lista las camaras conectadas con su NOMBRE (DirectShow), en el MISMO orden que
+    el indice de OpenCV. Asi el frontend deja elegir 'Camo' por nombre sin adivinar el
+    numero. Usa pygrabber; si no esta instalado, devuelve lista vacia con el error."""
+    # FastAPI corre el endpoint en un hilo del threadpool donde COM NO esta inicializado.
+    # DirectShow (pygrabber) necesita CoInitialize en ESTE hilo -> lo hacemos y liberamos.
+    try:
+        import comtypes
+        comtypes.CoInitialize()
+        try:
+            from pygrabber.dshow_graph import FilterGraph
+            nombres = FilterGraph().get_input_devices()
+            return {"cameras": [{"index": i, "name": n} for i, n in enumerate(nombres)]}
+        finally:
+            comtypes.CoUninitialize()
+    except Exception as exc:
+        return {"cameras": [], "error": f"No se pudo enumerar camaras: {exc}"}
+
+
+# ── Calibracion de lineas (ENTRA/SALE) + distancia, desde el frontend ─────────
+_CAMERA_CONFIG = _BACKEND_DIR / "src" / "vision" / "camara" / "config.json"
+
+
+def _linea_valida(l) -> bool:
+    """[[x1,y1],[x2,y2]] con x,y en fracciones [0..1]."""
+    try:
+        return (isinstance(l, (list, tuple)) and len(l) == 2 and
+                all(isinstance(p, (list, tuple)) and len(p) == 2 and
+                    all(0.0 <= float(v) <= 1.0 for v in p) for p in l))
+    except Exception:
+        return False
+
+
+class CameraConfigRequest(BaseModel):
+    linea_entra: list   # [[x1,y1],[x2,y2]] en fracciones 0..1
+    linea_sale: list
+    distancia_m: float
+
+
+@app.get("/api/camera-config")
+def get_camera_config() -> dict:
+    """Lee las lineas ENTRA/SALE + distancia de camara/config.json (para el calibrador)."""
+    import json
+    try:
+        cfg = json.loads(_CAMERA_CONFIG.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo leer config: {exc}")
+    return {
+        "linea_entra": cfg.get("linea_entra"),
+        "linea_sale":  cfg.get("linea_sale"),
+        "distancia_m": cfg.get("distancia_m", 5.0),
+    }
+
+
+@app.post("/api/camera-config")
+def set_camera_config(body: CameraConfigRequest) -> dict:
+    """Guarda las lineas + distancia en camara/config.json (conserva el resto) y sube
+    config_version -> la vision recrea la zona EN CALIENTE (sin reiniciar el proceso)."""
+    import json
+    if not _linea_valida(body.linea_entra) or not _linea_valida(body.linea_sale):
+        raise HTTPException(status_code=400,
+                            detail="Lineas invalidas: [[x,y],[x,y]] con x,y en [0,1].")
+    if not (body.distancia_m and body.distancia_m > 0):
+        raise HTTPException(status_code=400, detail="distancia_m debe ser > 0.")
+    try:
+        cfg = json.loads(_CAMERA_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        cfg = {}
+    cfg["linea_entra"] = [[float(body.linea_entra[0][0]), float(body.linea_entra[0][1])],
+                          [float(body.linea_entra[1][0]), float(body.linea_entra[1][1])]]
+    cfg["linea_sale"]  = [[float(body.linea_sale[0][0]),  float(body.linea_sale[0][1])],
+                          [float(body.linea_sale[1][0]),  float(body.linea_sale[1][1])]]
+    cfg["distancia_m"] = float(body.distancia_m)
+    try:
+        _CAMERA_CONFIG.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar config: {exc}")
+    nuevo = int(get_runtime().get("config_version", 0)) + 1
+    set_runtime(config_version=nuevo)
+    return {"saved": True, "config_version": nuevo}
+
+
 # Explorador nativo de Windows via PowerShell (OpenFileDialog) -> sin depender de
 # tkinter (que no esta instalado). -STA es obligatorio para los dialogos de WinForms.
 _BROWSE_PS = (

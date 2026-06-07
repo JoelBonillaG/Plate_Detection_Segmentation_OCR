@@ -106,7 +106,10 @@ def segmentar(imagen, modelo, cfg=None):
     entrada = cv2.resize(gris, (w, h), interpolation=cv2.INTER_AREA)
     entrada = entrada.astype("float32")[None, :, :, None]
 
-    mascara = modelo.predict(entrada, verbose=0)[0, :, :, 0]
+    # llamada directa al modelo (no .predict): mismo resultado, MUCHO mas rapido para
+    # 1 sola muestra (predict arma una tf.data pipeline en cada llamada). training=False
+    # -> BatchNorm/Dropout en modo inferencia, identico a predict().
+    mascara = modelo(entrada, training=False).numpy()[0, :, :, 0]
     cajas, _ = mask_to_boxes(mascara, imagen.shape, cfg["threshold"],
                              cfg["min_area_ratio"], cfg["padding"], cfg["char_aspect"])
     # Recupera tinta omitida por la mascara sin invadir caracteres vecinos.

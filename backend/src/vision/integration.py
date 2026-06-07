@@ -1,8 +1,8 @@
 """
-Punto de integracion entre el pipeline de camara/cadena y el backend FastAPI.
+Punto de integracion entre el pipeline de vision y el backend FastAPI.
 
-Contiene responsabilidades externas al loop de camara y al pipeline de vision:
-persistencia en DB, payloads WebSocket, rutas MJPEG y almacenamiento estatico.
+Este modulo centraliza persistencia en base de datos, payloads WebSocket, rutas
+MJPEG y almacenamiento estatico de evidencias.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ SRC_DIR = DIR.parent
 BACKEND_DIR = SRC_DIR.parent
 PROJECT_DIR = BACKEND_DIR.parent
 
-sys.path.insert(0, str(DIR))            # para 'import bridge'
+sys.path.insert(0, str(DIR))
 sys.path.insert(0, str(DIR / "pipeline"))
 sys.path.insert(0, str(BACKEND_DIR))
 
@@ -102,12 +102,12 @@ def bbox_dict(bbox) -> dict | None:
 
 
 def hacer_al_capturar(modelos):
-    """Callback ejecutado cuando un vehiculo completa el cruce."""
+    """Callback que la camara llama cuando un carro completa el cruce."""
 
-    def al_capturar(nombre: str, frame, velocidad: float = 0.0):
-        # La velocidad se normaliza antes de persistirla y enviarla al frontend.
+    def al_capturar(nombre: str, frame, velocidad: float = 0.0, metricas=None):
+        # La velocidad se normaliza a un decimal antes de persistirla y transmitirla.
         velocidad = round(float(velocidad or 0.0), 1)
-        # Ajuste opcional de velocidad configurado desde el frontend.
+        # Ajuste opcional configurado desde el frontend para pruebas controladas.
         rc = get_runtime()
         if rc.get("speed_boost_enabled"):
             velocidad = round(velocidad + float(rc.get("speed_boost_kmh", 0) or 0), 1)
@@ -117,13 +117,30 @@ def hacer_al_capturar(modelos):
 
         texto = resultado.texto or ""
         placa_str = texto.upper().strip() or "DESCONOCIDA"
+
+        # ── LOG de muestreo del cruce (Nyquist): t_start, t_end, dt, N, fps, error ──
+        if metricas:
+            te = metricas.get("t_entra"); ts = metricas.get("t_sale")
+            dtc = metricas.get("dt"); n = int(metricas.get("frames_cruce") or 0)
+            fpsc = metricas.get("fps_cruce")
+            err = (100.0 / n) if n else None              # error ~ 1/N
+            aviso = "POCAS MUESTRAS" if (n and n < 10) else "ok"
+            print(f"[CRUCE] placa={placa_str}")
+            print(f"        t_start = {te:.2f} s" if te is not None else "        t_start = n/d")
+            print(f"        t_end   = {ts:.2f} s" if ts is not None else "        t_end   = n/d")
+            print(f"        dt      = {dtc:.3f} s" if dtc else "        dt      = n/d")
+            print(f"        frames_en_cruce = {n}")
+            print(f"        fps_efectivo    = {fpsc:.1f} Hz" if fpsc else "        fps_efectivo    = n/d")
+            if err is not None:
+                print(f"        N_minimo(10%) = 10  ->  {aviso} (error ~{err:.0f}%)")
+            print(f"        velocidad = {velocidad:.1f} km/h")
         bbox_v = bbox_dict(resultado.carro_bbox)
         bbox_p = bbox_dict(resultado.placa_bbox)
         # Confianzas producidas por el pipeline de vision.
         conf_v = resultado.conf_vehiculo
         conf_p = resultado.conf_placa
         conf_ocr = float(resultado.conf_ocr or 0.0)
-        # Convierte las confianzas por caracter a un formato serializable.
+        # Lista serializable de confianza por caracter.
         ocr_por_caracter = [
             {"caracter": ch, "confianza": round(float(c), 4)}
             for ch, c in (resultado.ocr_por_caracter or [])
@@ -139,14 +156,13 @@ def hacer_al_capturar(modelos):
         fz = fuzzy_evaluar(velocidad, reincidencias)
         tipo_evento = fz.tipo_evento
         riesgo      = fz.nivel_riesgo
-        sancion     = max(0, fz.dias_sancion)   # -1 (temeraria) → 0 para DB
+        sancion     = max(0, fz.dias_sancion)
         estado_rev  = "automatica" if tipo_evento == "normal" else "pendiente"
 
         evento_id_full = f"EVT-{str(uuid.uuid4())[:8].upper()}"
 
-        # frame.jpg = miniatura del evento en la lista -> se escribe ANTES del broadcast
-        # para que NO salga la imagen rota. El resto (detalle: se abre al click ms despues)
-        # se difiere para no añadir latencia a la llegada del evento.
+        # La miniatura se escribe antes del broadcast para que el frontend pueda
+        # mostrar el evento inmediatamente; el detalle se guarda despues.
         guardar_antes = [("frame.jpg", frame), ("placa.jpg", resultado.placa)]
         por_guardar = []
         ruta_frame = storage_path(evento_id_full, "frame.jpg")

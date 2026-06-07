@@ -6,9 +6,9 @@ import os
 from dotenv import load_dotenv
 
 
-ROOT_DIR = Path(__file__).resolve().parents[3]
-ENV_PATH = ROOT_DIR / ".env"
-load_dotenv(ENV_PATH)
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+ENV_PATH = BACKEND_DIR / ".env"
+load_dotenv(ENV_PATH, override=True)
 
 
 def _get_int(name: str, default: int) -> int:

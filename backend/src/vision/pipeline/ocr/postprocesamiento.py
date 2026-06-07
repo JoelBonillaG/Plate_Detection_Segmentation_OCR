@@ -23,16 +23,15 @@ from .test_plate import prepare_crop   # preprocesamiento usado en entrenamiento
 _MAX_CANDIDATOS = 12
 
 
-def _predecir(crop, modelo, th, tw, canales):
-    """Softmax del clasificador para UN crop de caracter (gris)."""
+def _preparar(crop, th, tw, canales):
+    """Preprocesa UN crop a la entrada del clasificador (sin la dimension de batch)."""
     gris = crop if crop.ndim == 2 else cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     proc = prepare_crop(gris, th, tw)
     if canales == 1:
         proc = np.expand_dims(proc, axis=-1)
     elif canales == 3:
         proc = cv2.cvtColor(proc.astype(np.uint8), cv2.COLOR_GRAY2RGB).astype("float32")
-    proc = np.expand_dims(proc, axis=0)
-    return modelo.predict(proc, verbose=0)[0]
+    return proc
 
 
 def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
@@ -57,12 +56,16 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
     letras_ids = [i for i, c in enumerate(classes) if c.isalpha()]
     digitos_ids = [i for i, c in enumerate(classes) if c.isdigit()]
 
-    # Candidato por caja: mejor letra, mejor digito y altura del recorte.
+    # Los crops validos se infieren en un solo batch para reducir latencia.
+    validos = [c for c in crops if c is not None and c.size > 0]
+    if not validos:
+        return ("", []) if return_conf else ""
+    batch = np.stack([_preparar(c, th, tw, canales) for c in validos])
+    preds = modelo(batch, training=False).numpy()
+
+    # Candidato por caja: mejor letra, mejor digito, confianza y altura.
     candidatos = []
-    for crop in crops:
-        if crop is None or crop.size == 0:
-            continue
-        pred = _predecir(crop, modelo, th, tw, canales)
+    for crop, pred in zip(validos, preds):
         il = max(letras_ids, key=lambda i: pred[i])
         idg = max(digitos_ids, key=lambda i: pred[i])
         candidatos.append({
@@ -75,7 +78,7 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
     if n == 0:
         return ("", []) if return_conf else ""
 
-    # Acota el combinatorio si llegan demasiadas cajas.
+    # Si hay demasiadas cajas, se priorizan las de mayor confianza.
     if n > _MAX_CANDIDATOS:
         candidatos = sorted(
             candidatos,
@@ -97,8 +100,8 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
                 texto += c["digito"]; confs.append(c["conf_digito"])
         return texto, confs
 
-    # Busca la mejor subsecuencia que encaje en 3 letras + N digitos.
-    mejor = None   # (score, indices)
+    # Busqueda de la mejor subsecuencia que encaje en 3 letras + N digitos.
+    mejor = None
     for nd in digitos_validos:
         largo = num_letras + nd
         if n < largo:
@@ -108,15 +111,15 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
             for pos, i in enumerate(indices):
                 c = candidatos[i]
                 score += c["conf_letra"] if pos < num_letras else c["conf_digito"]
-            # La consistencia de altura penaliza regiones mucho mas bajas.
+            # Penalizacion por regiones demasiado bajas respecto a los caracteres.
             penal_alto = sum(
                 max(0.0, (alto_medio * 0.6 - candidatos[i]["alto"]) / alto_medio)
                 for i in indices
             )
-            saltos = (indices[-1] - indices[0] + 1) - largo   # huecos internos
+            saltos = (indices[-1] - indices[0] + 1) - largo
             s = score / largo - 0.12 * saltos - 0.35 * penal_alto
             if nd == 4:
-                s += 0.05   # leve preferencia al formato 3+4
+                s += 0.05
             if mejor is None or s > mejor[0]:
                 mejor = (s, indices)
 
@@ -126,4 +129,3 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
 
 
 __all__ = ["leer_placa"]
-
