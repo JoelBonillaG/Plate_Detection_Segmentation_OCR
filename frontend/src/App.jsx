@@ -227,7 +227,7 @@ function SpeedBoost() {
 
   return (
     <div className={`speed-boost ${enabled ? "on" : "off"}`}
-         title="Suma km/h a la velocidad detectada (solo presentación)">
+         title="Ajuste opcional de velocidad aplicado al evento detectado">
       <Gauge size={15} />
       <span className="speed-boost-lab">+</span>
       <input type="number" className="speed-boost-input" value={kmh}
@@ -267,7 +267,7 @@ function Topbar({ connected, onOpenDetail }) {
       <StatusPill icon={Clock3}       label="Hora"    value={systemStatus.currentTime} tone="slate" />
       <div className="topbar-spacer" />
 
-      {/* Boost de velocidad (presentación) + toggle global de correo */}
+      {/* Ajuste opcional de velocidad y toggle global de correo */}
       <SpeedBoost />
       <EmailToggle />
 
@@ -1108,7 +1108,7 @@ function VisionTab({ event }) {
   const pct = c => Math.round((c ?? 0) * 100);
 
   // Etapas. Las CNN tienen confianza real (barra). Enderezado/Filtros/Segmentación
-  // son CV determinista -> sin barra, solo "✓ Aplicado" (no se inventan %).
+  // son CV determinista -> sin barra, solo estado aplicado (no se inventan %).
   const stages = [
     { label: "Imagen capturada",   src: event.images.frame,         conf: cv.vehicleDetection.confidence },
     { label: "Placa detectada",    src: event.images.plateDetected, conf: cv.plateDetection.confidence },
@@ -1818,7 +1818,7 @@ function LineCalibrator() {
     })
       .then(r => r.json().then(d => {
         if (!r.ok) throw new Error(d.detail ?? "Error");
-        setMsg("Guardado ✓ — la visión aplicó las líneas en caliente.");
+        setMsg("Guardado. La visión aplicó las líneas en caliente.");
       }))
       .catch(e => setMsg(e.message))
       .finally(() => setTimeout(() => setMsg(""), 5000));

@@ -224,7 +224,7 @@ def main():
     print(f"K-Fold k={FOLDS}: train por fold ~{len(tv_samples)*(FOLDS-1)//FOLDS:,}")
     print(f"Total efectivo: {FOLDS} x {len(tv_samples)*(FOLDS-1)//FOLDS:,} = "
           f"{FOLDS * (len(tv_samples)*(FOLDS-1)//FOLDS):,} > "
-          f"{256*16*num_classes:,} (requerido) ✓")
+          f"{256*16*num_classes:,} (requerido) OK")
 
     test_seq = CharSequence(test_images, test_labels, BATCH_SIZE,
                             shuffle=False, augment=False)
