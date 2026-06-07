@@ -24,16 +24,14 @@ _AQUI       = Path(__file__).resolve().parent
 _PROJECT_ROOT = _AQUI.parents[4]
 _MODELO_DEF = _PROJECT_ROOT / "ml" / "models" / "char_segmentation" / "Models" / "best_char_segmentation_unet.keras"
 
-# defaults espejo de los argparse de predict_char_segmentation.py
+# Valores por defecto equivalentes a los parametros del predictor CLI.
 _CFG_DEF = {
     "threshold": 0.50,
     "min_area_ratio": 0.002,
     "padding": 0.08,
     "char_aspect": 0.60,
-    # refina cada caja al COMPONENTE CONECTADO de la tinta real (negro) de la placa:
-    # el U-Net a veces sub-segmenta (no pinta toda la B / la cola de la J) y la caja
-    # recorta tinta -> el OCR lee mal (B->E, P->F). Expandir al componente recupera
-    # esa tinta SIN invadir al char vecino. Poner False para volver al recorte crudo.
+    # Refinamiento de cada caja hacia el componente conectado de tinta real.
+    # Corrige subsegmentaciones del U-Net sin invadir caracteres vecinos.
     "refinar_tinta": True,
     "salidas": os.path.join(_AQUI, "segmentadas"),
 }
@@ -50,20 +48,12 @@ def _a_gris(img):
 
 
 def _refinar_cajas_por_tinta(gris, cajas, tol_alto=1.7):
-    """Expande cada caja al COMPONENTE CONECTADO de la tinta (negro) que le corresponde.
+    """Expande cada caja al componente conectado de tinta que le corresponde.
 
-    Motivo: el U-Net sub-segmenta a veces y la caja recorta parte del caracter
-    (panza de la B, cola de la J) -> el OCR lee otra letra. Aqui se binariza la tinta
-    real de la placa (Otsu inverso: oscuro->blanco), se hallan los componentes
-    conectados y cada caja se AGRANDA para cubrir el/los componentes que le pertenecen.
-
-    Guardas para no romper nada:
-      - solo se EXPANDE (min en x1/y1, max en x2/y2): nunca encoge una caja.
-      - no cruza el punto medio hacia el char vecino -> no fusiona caracteres.
-      - ignora componentes que no parecen char: el marco/sombra de la placa (muy alto
-        o muy ancho) y el ruido fino (muy bajo).
-      - solo toma un componente si la MAYORIA (>=50%) de su ancho cae en la caja ->
-        evita robar tinta del char de al lado.
+    El metodo binariza la tinta real de la placa, obtiene componentes conectados
+    y agranda cada caja solo dentro de limites seguros definidos por las cajas
+    vecinas. Asi se recuperan trazos omitidos por la mascara sin fusionar
+    caracteres.
     """
     if not cajas:
         return cajas
@@ -79,7 +69,7 @@ def _refinar_cajas_por_tinta(gris, cajas, tol_alto=1.7):
 
     nuevas = []
     for i, (x1, y1, x2, y2) in enumerate(cajas):
-        # limites de seguridad: punto medio con la caja vecina (no invadir al de al lado)
+        # Limites de seguridad definidos por el punto medio con cajas vecinas.
         lim_izq = 0 if i == 0 else int((centros[i - 1] + centros[i]) / 2)
         lim_der = W if i == len(cajas) - 1 else int((centros[i] + centros[i + 1]) / 2)
         nx1, ny1, nx2, ny2 = x1, y1, x2, y2
@@ -88,14 +78,14 @@ def _refinar_cajas_por_tinta(gris, cajas, tol_alto=1.7):
         for c in range(1, num):   # 0 = fondo
             cx, cy, cw, ch, _area = stats[c]
             if ch > tol_alto * alto_med or ch < 0.40 * alto_med:
-                continue          # marco/sombra (muy alto) o ruido fino (muy bajo)
+                continue          # componente no compatible con un caracter
             if cw > 1.8 * ancho_caja and cw > tol_alto * alto_med:
-                continue          # demasiado ancho = varios chars pegados / borde
+                continue          # componente demasiado ancho para una caja individual
             ox1, ox2 = max(x1, cx), min(x2, cx + cw)
             if ox2 <= ox1:
-                continue          # no solapa horizontalmente con esta caja
+                continue
             if (ox2 - ox1) / float(cw) < 0.50:
-                continue          # la mayoria del componente es de otro char
+                continue
             nx1 = max(lim_izq, min(nx1, cx))
             ny1 = min(ny1, cy)
             nx2 = min(lim_der, max(nx2, cx + cw))
@@ -119,7 +109,7 @@ def segmentar(imagen, modelo, cfg=None):
     mascara = modelo.predict(entrada, verbose=0)[0, :, :, 0]
     cajas, _ = mask_to_boxes(mascara, imagen.shape, cfg["threshold"],
                              cfg["min_area_ratio"], cfg["padding"], cfg["char_aspect"])
-    # recupera la tinta que el U-Net dejo fuera de la caja (sin invadir al vecino)
+    # Recupera tinta omitida por la mascara sin invadir caracteres vecinos.
     if cfg.get("refinar_tinta", True):
         cajas = _refinar_cajas_por_tinta(gris, cajas)
     crops = [imagen[y1:y2, x1:x2] for (x1, y1, x2, y2) in cajas]

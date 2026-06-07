@@ -1,26 +1,14 @@
-"""
-POST-PROCESO del OCR: fuerza el FORMATO de placa ecuatoriana sobre las cajas que
-dejo la segmentacion, eligiendo la mejor secuencia "3 letras + dígitos".
+﻿"""
+Postprocesamiento del clasificador de caracteres.
 
-Por que existe: el OCR base (ocr/__init__.py -> clasificar) escupe UN caracter por
-cada caja, sin limite. Si la segmentacion entrega cajas de mas (tornillos, el
-guion '-', un caracter partido en dos), salen 9-12 caracteres y el resultado es
-basura (p.ej. 'IHB124514689' en vez de 'HBB5169').
+El modulo fuerza el formato de placa ecuatoriana sobre las cajas entregadas por
+la segmentacion. El clasificador base produce un caracter por cada caja recibida;
+por ello, cuando existen regiones adicionales, se selecciona la mejor subsecuencia
+con estructura de tres letras y tres o cuatro digitos.
 
-Este modulo NO modifica el OCR existente. Es una ALTERNATIVA a clasificar() que,
-ademas de clasificar, recorta al formato valido descartando lo sobrante:
-
-    - placa Ecuador = 3 letras + 4 digitos (o 3+3 en placas viejas).
-    - de TODAS las cajas se elige la mejor SUBSECUENCIA de esa longitud, puntuando
-      por confianza del OCR + consistencia de altura (los caracteres reales tienen
-      altura parecida; el guion/tornillos son mas bajos) - huecos internos.
-
-Es seleccion RELATIVA (la mejor combinacion), no un umbral de confianza duro: asi
-no se bota un caracter real que solo salio con confianza baja.
-
-Uso (cuando se quiera enganchar, reemplazando la llamada a clasificar en cadena):
-    from ocr import postprocesamiento as pp
-    texto, confs = pp.leer_placa(crops, modelo, classes)
+La seleccion combina confianza del clasificador, consistencia de altura y
+penalizacion por saltos internos. El criterio es relativo y evita depender de un
+umbral fijo por caracter.
 """
 
 from itertools import combinations
@@ -28,11 +16,10 @@ from itertools import combinations
 import cv2
 import numpy as np
 
-from .test_plate import prepare_crop   # mismo preprocesado por-caracter del entrenamiento
+from .test_plate import prepare_crop   # preprocesamiento usado en entrenamiento
 
 
-# si llegan demasiadas cajas, acotar el combinatorio (rendimiento): nos quedamos
-# con las N mas "caracter" (mayor confianza letra/digito) antes de combinar.
+# Limite de candidatos para controlar el costo combinatorio.
 _MAX_CANDIDATOS = 12
 
 
@@ -70,7 +57,7 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
     letras_ids = [i for i, c in enumerate(classes) if c.isalpha()]
     digitos_ids = [i for i, c in enumerate(classes) if c.isdigit()]
 
-    # candidato por caja: mejor LETRA y mejor DIGITO (+ su confianza) y la altura
+    # Candidato por caja: mejor letra, mejor digito y altura del recorte.
     candidatos = []
     for crop in crops:
         if crop is None or crop.size == 0:
@@ -88,7 +75,7 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
     if n == 0:
         return ("", []) if return_conf else ""
 
-    # acotar el combinatorio si hay demasiadas cajas (deja las mas "caracter")
+    # Acota el combinatorio si llegan demasiadas cajas.
     if n > _MAX_CANDIDATOS:
         candidatos = sorted(
             candidatos,
@@ -110,7 +97,7 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
                 texto += c["digito"]; confs.append(c["conf_digito"])
         return texto, confs
 
-    # buscar la mejor subsecuencia que encaje en 3 letras + N digitos
+    # Busca la mejor subsecuencia que encaje en 3 letras + N digitos.
     mejor = None   # (score, indices)
     for nd in digitos_validos:
         largo = num_letras + nd
@@ -121,7 +108,7 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
             for pos, i in enumerate(indices):
                 c = candidatos[i]
                 score += c["conf_letra"] if pos < num_letras else c["conf_digito"]
-            # consistencia de altura: penaliza cajas mucho mas bajas (guion/tornillo)
+            # La consistencia de altura penaliza regiones mucho mas bajas.
             penal_alto = sum(
                 max(0.0, (alto_medio * 0.6 - candidatos[i]["alto"]) / alto_medio)
                 for i in indices
@@ -129,13 +116,14 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
             saltos = (indices[-1] - indices[0] + 1) - largo   # huecos internos
             s = score / largo - 0.12 * saltos - 0.35 * penal_alto
             if nd == 4:
-                s += 0.05   # leve preferencia al formato 3+4 (mas comun hoy)
+                s += 0.05   # leve preferencia al formato 3+4
             if mejor is None or s > mejor[0]:
                 mejor = (s, indices)
 
-    indices = mejor[1] if mejor is not None else tuple(range(n))  # menos cajas que el formato
+    indices = mejor[1] if mejor is not None else tuple(range(n))
     texto, confs = _emitir(indices)
     return (texto, confs) if return_conf else texto
 
 
 __all__ = ["leer_placa"]
+

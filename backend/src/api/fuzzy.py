@@ -89,13 +89,13 @@ RULES: list[tuple[str, str, str]] = [
     ("no_excess", "moderate", "no_action"),
     ("no_excess", "high",     "warning"),
     ("no_excess", "chronic",  "warning"),
-    # R6–R10: Leve (~25 km/h) -> advertencia con record limpio
+    # R6–R10: Leve (~25 km/h) -> advertencia con historial limpio.
     ("minor",     "clean",    "warning"),
     ("minor",     "low",      "warning"),
     ("minor",     "moderate", "low_susp"),
     ("minor",     "high",     "low_susp"),
     ("minor",     "chronic",  "medium_susp"),
-    # R11–R15: Moderado (~31 km/h) -> YA hay suspension aunque sea limpio
+    # R11–R15: Moderado (~31 km/h) -> suspension inicial incluso con historial limpio.
     ("moderate",  "clean",    "low_susp"),
     ("moderate",  "low",      "low_susp"),
     ("moderate",  "moderate", "medium_susp"),
@@ -107,8 +107,8 @@ RULES: list[tuple[str, str, str]] = [
     ("serious",   "moderate", "high_susp"),
     ("serious",   "high",     "high_susp"),
     ("serious",   "chronic",  "critical_susp"),
-    # R21–R25: Critico (~42-49 km/h, justo bajo expulsion) -> severidad ALTA ya con
-    # record limpio, y CRITICA si reincide. El historial SIGUE diferenciando en el tope.
+    # R21–R25: Critico (~42-49 km/h) -> severidad alta con historial limpio y
+    # severidad critica cuando existe reincidencia.
     ("critical",  "clean",    "high_susp"),
     ("critical",  "low",      "high_susp"),
     ("critical",  "moderate", "critical_susp"),

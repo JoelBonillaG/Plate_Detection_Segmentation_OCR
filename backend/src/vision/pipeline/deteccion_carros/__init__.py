@@ -4,8 +4,8 @@ ETAPA 0 del pipeline: deteccion de vehiculos.
 Primer eslabon de la cadena: detecta el carro mas confiable del frame, lo recorta
 (con margen) y entrega ese recorte a la ETAPA 1 (placas). Correr la red de placas
 DENTRO del carro da zoom -> placa mas grande -> mejor OCR, y menos falsos
-positivos del fondo. Si el modelo de carros no esta entrenado, la cadena hace
-fallback: corre la placa sobre el frame completo (ver cadena.py).
+positivos del fondo. Si el modelo de carros no esta entrenado, la cadena usa el
+frame completo para detectar la placa (ver cadena.py).
 
 Tambien guarda auditoria en disco:
     - el frame con la caja dibujada        -> detecciones/<nombre>.jpg

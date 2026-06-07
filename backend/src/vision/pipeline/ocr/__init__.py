@@ -21,8 +21,8 @@ from .test_plate import prepare_crop, load_classes
 
 _AQUI        = Path(__file__).resolve().parent
 _PROJECT_ROOT = _AQUI.parents[4]
-# usar el .keras en formato HDF5 (legible por TF/Keras 2.10).
-# OJO: los .keras de "Respaldo Modelo/" estan en formato zip (Keras 3) y NO cargan aqui.
+# Se usa el .keras compatible con la version de TensorFlow/Keras del entorno.
+# Los respaldos en formato Keras 3 no se cargan en esta version.
 _MODELO_DEF  = _PROJECT_ROOT / "ml" / "models" / "ocr" / "Modelos" / "best_cnn_ocr.keras"
 _CLASSES_DEF = _PROJECT_ROOT / "ml" / "models" / "ocr" / "Modelos" / "classes.txt"
 _SALIDAS_DEF = _AQUI / "salidas"
@@ -73,7 +73,7 @@ def clasificar(crops, modelo, classes, return_conf=False, num_letters=3):
 
         pred = modelo.predict(proc, verbose=0)[0]
 
-        # restringir el argmax a la clase valida por posicion
+        # Restriccion del argmax segun la posicion esperada en la placa.
         if num_letters is None:
             mejor = int(np.argmax(pred))
         else:

@@ -15,7 +15,7 @@ DATASET_BR = _RAW_DATASETS / "brazil_plates"
 OUTPUT_DIR = PROJECT_ROOT / "datasets" / "processed" / "ocr_characters_final"
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
-# Configuracion de generacion. Para cambiar parametros, edita aqui.
+# Parametros de generacion del dataset de caracteres.
 CLEAN_OUTPUT = False
 OUTPUT_SIZE = 64
 PADDING_RATIO = 0.12
@@ -23,7 +23,7 @@ LOG_EVERY = 250
 
 
 def normalize_class_name(name):
-    # Brasil usa nombres como '-0-', '-1-' -> strip guiones -> '0', '1'
+    # El dataset de Brasil usa nombres como "-0-" y "-1-".
     return name.strip("-")
 
 

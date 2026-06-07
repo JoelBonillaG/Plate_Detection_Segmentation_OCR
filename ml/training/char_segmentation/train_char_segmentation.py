@@ -16,27 +16,24 @@ PROJECT_ROOT = _HERE.resolve().parents[1]
 DATASETS_ROOT = PROJECT_ROOT / "datasets"
 RAW_DATASETS = DATASETS_ROOT / "raw"
 MODELS_ROOT = PROJECT_ROOT / "models"
-# Cada dataset declara: si se FILTRA por calidad, su TOPE de placas y en que SPLITS
-# aporta. Decision clave: lo foraneo (UK/Brasil) va SOLO a train -> ensena geometria
-# y angulos; valid queda SOLO con Ecuador -> el checkpoint (val_dice) se elige por el
-# desempeno en el dominio OBJETIVO, no por placas extranjeras.
+# Cada dataset declara si se filtra por calidad, su tope de placas y los splits
+# donde aporta. Los datos extranjeros se destinan principalmente a entrenamiento,
+# mientras que la validacion prioriza el dominio objetivo.
 DATASETS = [
-    # base "lpr" = India (KA=Karnataka). Char-bbox limpios -> sin filtro. Aporta valid (proxy).
+    # Base de India con cajas de caracteres limpias.
     {"name": "india_base", "path": RAW_DATASETS / "india_char_segmentation",
      "filter": False, "max": 0, "splits": ("train", "valid")},
-    # Ecuador REAL (dominio destino). Recortes generados por crop_ecuador_plates.py desde el
-    # dataset de carro-entero (22 placas unicas con chars, ya a escala de recorte). filter=False:
-    # son reales y a proposito INCLINADAS -> el filtro de calidad las rechazaria por salto_altura.
+    # Recortes reales de Ecuador generados desde el dataset de vehiculos completos.
     {"name": "ecuador_real", "path": DATASETS_ROOT / "processed" / "ecuador_plate_crops",
      "filter": False, "max": 0,    "splits": ("train",)},
     {"name": "brasil",  "path": RAW_DATASETS / "brazil_plates",
-     "filter": True,  "max": 0,    "splits": ("train", "test")},   # buen match -> sin tope
+     "filter": True,  "max": 0,    "splits": ("train", "test")},
     {"name": "uk",      "path": RAW_DATASETS / "uk_plates",
-     "filter": True,  "max": 3000, "splits": ("train", "test")},   # ruidoso -> filtrar + capar
+     "filter": True,  "max": 3000, "splits": ("train", "test")},
 ]
 OUTPUT_DIR = MODELS_ROOT / "char_segmentation" / "Models"
 
-# Configuracion de entrenamiento. Para cambiar el experimento, edita aqui.
+# Parametros del entrenamiento del modelo de segmentacion.
 MODEL_NAME = "char_segmentation_unet.keras"
 HEIGHT = 96
 WIDTH = 256
@@ -67,21 +64,18 @@ def find_image(images_dir, stem):
 
 
 def plate_quality(boxes, min_chars, max_adj_ratio, max_row_spread):
-    """(ok, motivo). Acepta placas de 1 fila con chars de altura coherente,
-    permitiendo cambio GRADUAL por perspectiva (placa de lado); rechaza saltos de
-    altura abruptos (subtexto/vanity UK) y placas multi-fila."""
+    """Evalua si una placa mantiene una fila de caracteres geometricamente coherente."""
     if len(boxes) < min_chars:
         return False, "pocos_chars"
     bx = sorted(boxes, key=lambda b: b[0])             # izq -> der
     hs = [b[3] for b in bx]
     if min(hs) <= 0:
         return False, "caja_invalida"
-    # 1) salto de altura entre chars VECINOS -> subtexto/vanity, NO perspectiva
-    #    (la perspectiva cambia la altura GRADUAL, vecinos quedan parecidos).
+    # La perspectiva cambia la altura de forma gradual entre caracteres vecinos.
     for a, b in zip(hs, hs[1:]):
         if max(a, b) / min(a, b) > max_adj_ratio:
             return False, "salto_altura"
-    # 2) multi-fila -> y_center muy disperso vs altura tipica (permite tilt de 1 fila).
+    # La dispersion vertical alta indica una placa de multiples filas.
     ys = [b[1] for b in bx]
     if (max(ys) - min(ys)) > max_row_spread * statistics.median(hs):
         return False, "multi_fila"
@@ -151,11 +145,10 @@ def parse_boxes(label_path):
 
 def build_targets(boxes, height, width, sep_ratio, shrink_y, border_weight):
     # Devuelve target (H, W, 2):
-    #   canal 0 = mascara de chars. Cada char se pinta a ANCHO COMPLETO (crops buenos
-    #             para el OCR) y solo se TALLA un separador fino entre chars vecinos,
-    #             de modo que queden como instancias separables sin perder ancho.
+    #   canal 0 = mascara de caracteres. Cada caracter se pinta a ancho completo
+    #             y se separa de sus vecinos mediante una franja fina.
     #   canal 1 = mapa de pesos: sube el costo de equivocarse en ese separador, asi la
-    #             red aprende a NO fusionar chars pegados (idea de U-Net, Ronneberger 2015).
+    #             red aprende a separar caracteres contiguos.
     mask = np.zeros((height, width), dtype="float32")
     weight = np.ones((height, width), dtype="float32")
     painted = []

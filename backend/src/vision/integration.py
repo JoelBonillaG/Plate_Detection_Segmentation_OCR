@@ -1,7 +1,7 @@
 """
 Punto de integracion entre el pipeline de camara/cadena y el backend FastAPI.
 
-Aqui vive lo que no pertenece al loop de camara ni a la cadena OCR:
+Contiene responsabilidades externas al loop de camara y al pipeline de vision:
 persistencia en DB, payloads WebSocket, rutas MJPEG y almacenamiento estatico.
 """
 
@@ -102,14 +102,12 @@ def bbox_dict(bbox) -> dict | None:
 
 
 def hacer_al_capturar(modelos):
-    """Callback que la camara llama cuando un carro completa el cruce."""
+    """Callback ejecutado cuando un vehiculo completa el cruce."""
 
     def al_capturar(nombre: str, frame, velocidad: float = 0.0):
-        # redondeo a 1 decimal en el ORIGEN -> DB, WS, correo y entrada al difuso
-        # quedan limpios (evita 1.4535666218035004 km/h en el panel).
+        # La velocidad se normaliza antes de persistirla y enviarla al frontend.
         velocidad = round(float(velocidad or 0.0), 1)
-        # SPEED BOOST (presentacion): suma km/h configurables desde el frontend para
-        # demostrar la sancion difusa en tiempo real (los carros del video van lento).
+        # Ajuste opcional de velocidad configurado desde el frontend.
         rc = get_runtime()
         if rc.get("speed_boost_enabled"):
             velocidad = round(velocidad + float(rc.get("speed_boost_kmh", 0) or 0), 1)
@@ -121,11 +119,11 @@ def hacer_al_capturar(modelos):
         placa_str = texto.upper().strip() or "DESCONOCIDA"
         bbox_v = bbox_dict(resultado.carro_bbox)
         bbox_p = bbox_dict(resultado.placa_bbox)
-        # confianzas REALES del pipeline (YOLO carro/placa, softmax OCR por caracter)
+        # Confianzas producidas por el pipeline de vision.
         conf_v = resultado.conf_vehiculo
         conf_p = resultado.conf_placa
         conf_ocr = float(resultado.conf_ocr or 0.0)
-        # [(caracter, confianza), ...] -> lista de dicts serializable
+        # Convierte las confianzas por caracter a un formato serializable.
         ocr_por_caracter = [
             {"caracter": ch, "confianza": round(float(c), 4)}
             for ch, c in (resultado.ocr_por_caracter or [])

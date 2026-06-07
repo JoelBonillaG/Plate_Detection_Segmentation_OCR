@@ -8,8 +8,8 @@ Lo que esta abajo solo LEE ese archivo y expone los valores como constantes del
 modulo (asi el resto del codigo y `from camara import DETECTAR_CARROS` siguen
 funcionando igual).
 
-Modo calibracion (calibrar=true en config.json): se puede ajustar TODO por
-interfaz, sin tocar el codigo:
+Modo calibracion (calibrar=true en config.json): los parametros principales se
+pueden ajustar desde la interfaz:
     - arrastrar los extremos de las lineas con el mouse
     - sliders (arriba de la ventana) para los 3 gates
     - overlay con ancho de placa (px) y nitidez en vivo
@@ -29,7 +29,7 @@ from lineas import ZonaDeteccion, nitidez
 _AQUI       = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(_AQUI, "config.json")
 
-# valores por defecto -> sirven si falta config.json o alguna clave (no rompe).
+# Valores por defecto usados cuando falta config.json o alguna clave.
 _DEFAULTS = {
     "camara_idx": 0,
     "ventana_w": 1600,
@@ -78,8 +78,7 @@ def _par_lineas(p):
 
 CFG = cargar_config()
 
-# paleta BGR (constantes visuales, no son configuracion). Tono "slate" sobrio,
-# texto anti-aliasing y paneles semi-transparentes -> overlay limpio y legible.
+# Paleta BGR para el overlay de monitoreo.
 COLOR_ENTRA   = (255, 176, 0)    # azul-cian: linea LEJANA (entra)
 COLOR_SALE    = (140, 210, 64)   # verde-teal: linea CERCANA (sale)
 COLOR_TRACK   = (96, 220, 130)   # verde: zona rastreando (acento activo)
@@ -118,14 +117,13 @@ RECONECTAR_MAX_FALLOS = CFG["frames_antes_de_reconectar"]
 
 VENTANA       = "Detector de Placas"
 
-# los frames crudos (carro centrado, con placa) se guardan aqui -> materia prima
+# Directorio donde se almacenan los frames capturados para auditoria.
 CAPTURA_DIR   = os.path.join(_AQUI, "capturas")
 
 
 # ── dibujo ────────────────────────────────────────────────────────────────
-# Estilo: todo con cv2.LINE_AA (bordes suaves, no "escalonados"), etiquetas tipo
-# chip con fondo relleno y paneles semi-transparentes. Da un look limpio/pro en
-# vez del texto crudo grueso de antes.
+# El overlay usa bordes suavizados, etiquetas con fondo y paneles
+# semitransparentes para mantener legibilidad sobre el video.
 
 def _texto(frame, txt, org, escala=0.5, color=COLOR_TEXTO, grosor=1):
     cv2.putText(frame, txt, org, _FUENTE, escala, color, grosor, cv2.LINE_AA)
@@ -328,8 +326,8 @@ def _guardar_captura(captura, nombre, carpeta_captura, al_capturar):
     vel_txt = f"{vel:.1f} km/h" if vel is not None else "n/d"
     print(f"Carro {nombre}: vel={vel_txt}  -> {carpeta}")
 
-    # entregar el mejor frame al pipeline (etapa 0 -> OCR), si esta enganchado.
-    # se pasa la velocidad para que el backend la registre en el evento/DB.
+    # El mejor frame se entrega al pipeline cuando existe callback de captura.
+    # La velocidad se adjunta para registrarla en el evento y la base de datos.
     if al_capturar is not None:
         al_capturar(nombre, captura["mejor"], vel if vel is not None else 0.0)
 
@@ -533,9 +531,8 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
                          tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
     capturas_guardadas = 0
 
-    # guardar captura (3 imwrite + json + pipeline OCR) en un hilo aparte: asi NO
-    # frena el loop de video. 1 worker = se serializan las capturas en orden y el
-    # pipeline no corre concurrente. Los frames del dict ya son .copy(), no hay race.
+    # El guardado de captura y el pipeline se ejecutan en un hilo aparte para no
+    # frenar el video. Un solo worker serializa las capturas y evita concurrencia.
     guardado_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="captura")
 
     bbox        = None    # placa (lo que se rastrea)
@@ -646,19 +643,19 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         vivo, frame, version = fuente_video.leer()
         if not vivo:
             if es_archivo:
-                # video terminado -> reabrir (loop) para NO salir; el cambio de fuente
-                # se maneja arriba. Asi la presentacion sigue corriendo sin reiniciar.
+                # Video terminado: se reabre en bucle y el cambio de fuente se
+                # mantiene gestionado por el bloque superior.
                 fuente_video.liberar()
                 fuente_video = FuenteVideo(fuente_actual, es_archivo)
                 t_video_inicio = None
                 n_frame = 0
                 ultima_version = -1
                 continue
-            # fuente en vivo sin frame -> NO salir: esperar y seguir (el poll de arriba
-            # permite re-elegir otra fuente desde el frontend sin reiniciar el proceso).
+            # Fuente en vivo sin frame: se espera y se permite cambiar la fuente
+            # desde el frontend sin reiniciar el proceso.
             time.sleep(0.1)
             continue
-        # en vivo: si no hay frame nuevo, no reprocesar el mismo (no quema CPU)
+        # En vivo: si no hay frame nuevo, se evita reprocesar el mismo cuadro.
         if frame is None or (not es_archivo and version == ultima_version):
             time.sleep(0.005)
             continue
@@ -678,9 +675,8 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         frame = cv2.resize(frame, (VENTANA_W, VENTANA_H))
         n_frame += 1
 
-        # tiempo de este frame: video -> indice REAL de fuente / FPS (NO n_frame,
-        # que con los saltos del pacing ya no corresponde al tiempo del video) ;
-        # vivo -> reloj real. Asi la velocidad sale correcta aunque se salten frames.
+        # Tiempo del frame: video -> indice real de fuente / FPS; vivo -> reloj
+        # real. Esto conserva el calculo de velocidad aunque se salten frames.
         t = (version / fps) if es_archivo else time.time()
 
         if detector is not None and n_frame % INFERENCIA_CADA == 0:
@@ -711,7 +707,7 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             if zona.punto_en_zona(xc, yc, VENTANA_W, VENTANA_H):
                 dibujar_caja_etiqueta(frame, bbox, "Placa vehicular", COLOR_PLACA)
 
-        dibujar_velocidad(frame, zona)   # velocidad: siempre visible (demo incluida)
+        dibujar_velocidad(frame, zona)
 
         if CALIBRAR:
             dibujar_overlay(frame, zona, bbox)

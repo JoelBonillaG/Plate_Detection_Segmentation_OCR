@@ -116,20 +116,21 @@ async def video_stream(ws: WebSocket) -> None:
         await video_manager.disconnect(ws)
 
 
-# ── Auto-envio de correo en la DETECCION (si Correo ON, para TODO evento) ─────
+# ── Autoenvio de correo para eventos detectados ─────
 _autosent_ids: set[str] = set()
 
 
 def _autosend_email(event: dict) -> None:
-    """Envia el correo de deteccion en un HILO (no bloquea el WS). Las imagenes se
-    leen de disco; se espera un poco porque vision emite el evento antes de escribirlas."""
+    """Envia el correo de deteccion en un hilo para no bloquear el WebSocket.
+    Las imagenes se leen de disco; se espera brevemente porque vision emite el
+    evento antes de terminar la escritura."""
     try:
         time.sleep(0.6)
         from .config import get_settings
         to = get_settings().envio_infracciones_a
         if not to:
             return
-        # normal (dentro del limite) -> correo de cortesia ; infraccion -> correo con difuso/multa
+        # Evento normal -> correo de cortesia; infraccion -> correo con evaluacion difusa.
         es_normal = (event.get("tipo_evento") or "normal") == "normal"
         if es_normal:
             html, image_map = build_courtesy_html(event)
@@ -154,9 +155,8 @@ def _autosend_email(event: dict) -> None:
 
 
 def _maybe_autosend_email(event: dict) -> None:
-    """Dispara el correo automatico si el correo esta ON, para TODO evento: infraccion
-    -> correo con difuso/multa ; normal -> correo de cortesia (sin multa). Evita
-    duplicados por id."""
+    """Gestiona el envio automatico de correos para eventos normales e infracciones.
+    Evita duplicados por identificador de evento."""
     if not email_enabled():
         return
     eid = str(event.get("id") or event.get("db_id") or "")
@@ -428,20 +428,19 @@ class SpeedBoostRequest(BaseModel):
 
 @app.get("/api/speed-boost")
 def get_speed_boost() -> dict:
-    """Estado del 'speed boost' de presentacion (km/h que se suman a la deteccion)."""
+    """Estado del ajuste opcional de velocidad aplicado al evento detectado."""
     rc = get_runtime()
     return {"enabled": rc.get("speed_boost_enabled", False), "kmh": rc.get("speed_boost_kmh", 0.0)}
 
 
 @app.post("/api/speed-boost")
 def set_speed_boost(body: SpeedBoostRequest) -> dict:
-    """Suma artificial de velocidad para demostrar la sancion difusa en tiempo real.
-    Lo lee el proceso de vision al capturar cada evento (storage/runtime_config.json)."""
+    """Actualiza el ajuste opcional de velocidad usado por el proceso de vision."""
     rc = set_runtime(speed_boost_enabled=bool(body.enabled), speed_boost_kmh=float(body.kmh))
     return {"enabled": rc["speed_boost_enabled"], "kmh": rc["speed_boost_kmh"]}
 
 
-# ── Proceso de vision lanzado BAJO DEMANDA (el frontend no toca start_vision.ps1) ──
+# ── Proceso de vision lanzado bajo demanda desde la API ──
 _BACKEND_DIR = Path(__file__).resolve().parents[2]   # .../backend
 _vision_proc: "subprocess.Popen | None" = None
 

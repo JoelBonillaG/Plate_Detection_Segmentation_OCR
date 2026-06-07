@@ -61,8 +61,7 @@ def _warp(img, pts, margen=0.10):
     dst = np.array([[0, 0], [ancho - 1, 0],
                     [ancho - 1, alto - 1], [0, alto - 1]], dtype="float32")
     M = cv2.getPerspectiveTransform(src, dst)
-    # INTER_CUBIC: el warp remuestrea TODOS los pixeles; cubico conserva mejor los
-    # bordes de los caracteres que el lineal por defecto (menos blur cuando si toca).
+    # INTER_CUBIC conserva mejor los bordes de caracteres durante el remuestreo.
     return cv2.warpPerspective(img, M, (ancho, alto), flags=cv2.INTER_CUBIC)
 
 
@@ -112,7 +111,7 @@ def enderezar(crop, ancho=300, alto=100, umbral_grados=5.0, umbral_persp=0.12,
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
         if len(approx) == 4 and cv2.contourArea(c) > 0.20 * area:
             if _frontal(approx):
-                return crop          # ya frontal -> sin warp, maxima calidad
+                return crop          # placa frontal: no requiere transformacion
             return _warp(crop, approx, margen)
 
     # b) rectangulo rotado -> rotacion (solo si esta torcida)
@@ -122,5 +121,5 @@ def enderezar(crop, ancho=300, alto=100, umbral_grados=5.0, umbral_persp=0.12,
             return crop
         return _warp(crop, caja, margen)
 
-    # c) sin contorno fiable -> crop tal cual (resolucion nativa, sin tocar)
+    # c) sin contorno fiable -> recorte original en resolucion nativa
     return crop

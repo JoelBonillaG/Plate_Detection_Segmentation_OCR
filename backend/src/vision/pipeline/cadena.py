@@ -1,13 +1,12 @@
 """
 Cadena-por-frame compartida (modo BATCH y modo EN VIVO usan ESTO).
 
-Aqui vive la logica de procesar UN frame de punta a punta:
+Procesa un frame de punta a punta:
     frame -> [ETAPA 0] recorte carro -> [ETAPA 1] placa horizontal
           -> [filtros opcional] -> [ETAPA 2] crops por caracter -> [ETAPA 3] texto
 
-NO sabe de donde sale el frame (carpeta, camara o video): eso lo deciden
-batch.py (recorre carpeta) y main.py (dispara al cruzar la zona). Asi la
-cadena vive en un solo lugar y los dos modos se actualizan juntos.
+El origen del frame se define en batch.py o main.py, por lo que la cadena
+mantiene una unica implementacion para modo batch y modo en vivo.
 """
 
 import os
@@ -16,24 +15,22 @@ from dataclasses import dataclass
 
 import cv2
 
-# permitir importar los paquetes de las etapas (mismo dir que este archivo)
+# Permite importar los paquetes de las etapas desde este directorio.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import deteccion_carros as etapa0
 import deteccion_placas as etapa1
 import filtros as etapa_filtros
 import segmentacion as etapa2
 import ocr as etapa3
-# post-proceso (cero reentreno): filtro geometrico de cajas + formato de placa
+# Postprocesamiento de cajas y formato de placa.
 from segmentacion import postprocesamiento as seg_pp
 from ocr import postprocesamiento as ocr_pp
 from deteccion_placas import deskew_rotacion as deskew   # enderezado por ROTACION (Hough)
 
-# GATE de validez de placa: una placa ecuatoriana tiene 6-7 caracteres (3 letras +
-# 3/4 digitos). Si la segmentacion deja menos de MIN o mas de MAX crops, lo detectado
-# NO es una placa (reja, faro, ventana, arbusto) -> se DESCARTA el frame para no
-# registrar eventos basura como los falsos positivos. El rango 5-7 tolera 1 caracter
-# fusionado sin colar los falsos de 1-3 cajas.
-MIN_CHARS_PLACA = 5
+# Criterio de validez de placa: una placa ecuatoriana tiene 6-7 caracteres
+# (3 letras + 3/4 digitos). Si la segmentacion queda fuera de ese rango, el
+# frame se descarta para evitar eventos inconsistentes o lecturas incompletas.
+MIN_CHARS_PLACA = 6
 MAX_CHARS_PLACA = 7
 
 
@@ -50,20 +47,19 @@ class Modelos:
     cfg_carros: dict
     modelo_carros: object       # ETAPA 0 (carros); None si no esta entrenado o desactivado
     usar_filtros: bool
-    usar_carros: bool = True     # False -> se omite la ETAPA 0 (placa sobre frame completo)
-    usar_enderezado: bool = True # False -> la placa va al OCR SIN warp (recorte nativo directo)
+    usar_carros: bool = True     # False -> se omite la ETAPA 0.
+    usar_enderezado: bool = True # False -> se usa el recorte nativo de la placa.
 
 
 def cargar_modelos(usar_filtros=False, usar_carros=True, usar_enderezado=True):
     """
     Carga los modelos y sus configs una sola vez. Devuelve un Modelos.
 
-    usar_carros=False -> NO se carga el detector de carros (ETAPA 0). La cadena
-    trabaja la placa sobre el frame completo y el rastreo en vivo lo maneja la
-    PLACA (ver camara.DETECTAR_CARROS y lineas.ZonaDeteccion rastrear_por).
+    usar_carros=False -> no carga el detector de carros. En ese modo, la placa
+    se detecta sobre el frame completo.
 
-    usar_enderezado=False -> la placa va al OCR SIN warp de perspectiva (recorte
-    nativo directo): maxima calidad, pero no corrige placas torcidas.
+    usar_enderezado=False -> la placa se procesa con el recorte nativo, sin
+    correccion de perspectiva.
     """
     cfg         = etapa1.cargar_config()
     modelo      = etapa1.cargar_modelo(cfg)
@@ -72,8 +68,8 @@ def cargar_modelos(usar_filtros=False, usar_carros=True, usar_enderezado=True):
     modelo_seg  = etapa2.cargar_modelo()
     modelo_ocr, classes_ocr = etapa3.cargar_modelo()
 
-    # ETAPA 0: detector de carros. Si esta desactivado o no entrenado -> fallback:
-    # placa sobre el frame completo (mismas ramas `modelo_carros is None`).
+    # ETAPA 0: detector de carros. Si no esta disponible, la placa se busca
+    # sobre el frame completo.
     cfg_carros = etapa0.cargar_config()
     if not usar_carros:
         modelo_carros = None
@@ -83,7 +79,7 @@ def cargar_modelos(usar_filtros=False, usar_carros=True, usar_enderezado=True):
             modelo_carros = etapa0.cargar_modelo(cfg_carros)
         except FileNotFoundError:
             modelo_carros = None
-            print("[ETAPA 0] modelo de carros no entrenado -> fallback: placa sobre frame completo.")
+            print("[ETAPA 0] modelo de carros no entrenado -> placa sobre frame completo.")
             print("          entrena con: python ml/training/vehicle_detection/redes/entrenamiento.py")
 
     return Modelos(cfg=cfg, modelo=modelo, conf=conf, cfg_filtros=cfg_filtros,
@@ -115,7 +111,7 @@ def detectar_placa_en_vivo(frame, m):
     puede ser None. Lo usa main.py para alimentar las lineas (rastrea la placa)
     y dibujar ambas cajas; el batch no lo necesita.
     """
-    # sin modelo de carros -> fallback: no hay caja de carro, placa sobre el frame
+    # Sin modelo de carros, la placa se busca directamente sobre el frame.
     if m.modelo_carros is None:
         return None, etapa1.detectar(m.modelo, frame, m.conf)
 
@@ -123,7 +119,7 @@ def detectar_placa_en_vivo(frame, m):
     if carro is None:
         return None, None   # no hay carro -> no rastrear nada
 
-    # recorte del carro (con margen) + offset para volver al frame
+    # Recorte del carro con margen y offset para volver al frame completo.
     x1, y1, x2, y2 = carro
     h, w = frame.shape[:2]
     margen = m.cfg_carros.get("margen", 0.08)
@@ -191,9 +187,7 @@ def procesar_frame_detallado(nombre, frame, m):
         print(f"  [SIN PLACA] {nombre}")
         return None
     placa_crop = etapa1.recortar(base, bbox, m.cfg.get("margen", 0.08))   # crudo
-    # ETAPA 1c: enderezar por ROTACION (deskew Hough) SOLO si el flag esta activo.
-    # Robusto (no caza esquinas) y solo rota si esta torcida; si ya esta derecha o
-    # el flag esta off -> recorte nativo directo (sin remuestreo -> maxima calidad).
+    # ETAPA 1c: enderezado por rotacion cuando la configuracion lo habilita.
     if m.usar_enderezado:
         placa = deskew.enderezar_rotacion(placa_crop)
     else:
@@ -210,9 +204,8 @@ def procesar_frame_detallado(nombre, frame, m):
 
     # ETAPA 2: segmentar caracteres -> crops (+ cajas para visualizar).
     cajas, crops = etapa2.segmentar(entrada_seg, m.modelo_seg)
-    # POST-PROCESO: filtro geometrico -> bota guion '-', tornillos y restos (forma,
-    # no confianza). Se aplica antes de guardar/dibujar para que el overlay y los
-    # crops del OCR salgan limpios.
+    # POSTPROCESAMIENTO: filtro geometrico de cajas que no corresponden a
+    # caracteres, como guiones, tornillos o restos visuales.
     cajas, crops = seg_pp.filtrar_ruido(cajas, crops)
 
     # GATE de validez: si el numero de caracteres esta fuera del rango de una placa
@@ -230,8 +223,7 @@ def procesar_frame_detallado(nombre, frame, m):
     if seg_overlay.ndim == 2:
         seg_overlay = cv2.cvtColor(seg_overlay, cv2.COLOR_GRAY2BGR)
     for (sx1, sy1, sx2, sy2) in cajas:
-        # caja encogida ~8% y linea fina (1px) SOLO para visualizar: se ve menos
-        # saturada. NO afecta los crops del OCR (esos usan `cajas` sin tocar).
+        # La caja dibujada se reduce solo para mejorar la visualizacion.
         dx = int((sx2 - sx1) * 0.08)
         dy = int((sy2 - sy1) * 0.08)
         cv2.rectangle(seg_overlay, (sx1 + dx, sy1 + dy), (sx2 - dx, sy2 - dy), (0, 255, 0), 1)
