@@ -104,7 +104,7 @@ def bbox_dict(bbox) -> dict | None:
 def hacer_al_capturar(modelos):
     """Callback que la camara llama cuando un carro completa el cruce."""
 
-    def al_capturar(nombre: str, frame, velocidad: float = 0.0):
+    def al_capturar(nombre: str, frame, velocidad: float = 0.0, metricas=None):
         # redondeo a 1 decimal en el ORIGEN -> DB, WS, correo y entrada al difuso
         # quedan limpios (evita 1.4535666218035004 km/h en el panel).
         velocidad = round(float(velocidad or 0.0), 1)
@@ -119,6 +119,23 @@ def hacer_al_capturar(modelos):
 
         texto = resultado.texto or ""
         placa_str = texto.upper().strip() or "DESCONOCIDA"
+
+        # ── LOG de muestreo del cruce (Nyquist): t_start, t_end, dt, N, fps, error ──
+        if metricas:
+            te = metricas.get("t_entra"); ts = metricas.get("t_sale")
+            dtc = metricas.get("dt"); n = int(metricas.get("frames_cruce") or 0)
+            fpsc = metricas.get("fps_cruce")
+            err = (100.0 / n) if n else None              # error ~ 1/N
+            aviso = "POCAS MUESTRAS" if (n and n < 10) else "ok"
+            print(f"[CRUCE] placa={placa_str}")
+            print(f"        t_start = {te:.2f} s" if te is not None else "        t_start = n/d")
+            print(f"        t_end   = {ts:.2f} s" if ts is not None else "        t_end   = n/d")
+            print(f"        dt      = {dtc:.3f} s" if dtc else "        dt      = n/d")
+            print(f"        frames_en_cruce = {n}")
+            print(f"        fps_efectivo    = {fpsc:.1f} Hz" if fpsc else "        fps_efectivo    = n/d")
+            if err is not None:
+                print(f"        N_minimo(10%) = 10  ->  {aviso} (error ~{err:.0f}%)")
+            print(f"        velocidad = {velocidad:.1f} km/h")
         bbox_v = bbox_dict(resultado.carro_bbox)
         bbox_p = bbox_dict(resultado.placa_bbox)
         # confianzas REALES del pipeline (YOLO carro/placa, softmax OCR por caracter)

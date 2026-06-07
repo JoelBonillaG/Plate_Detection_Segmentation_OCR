@@ -104,6 +104,7 @@ class ZonaDeteccion:
         # cronometro de velocidad
         self._t_entra        = None   # tiempo (s) al cruzar ENTRA
         self._t_sale         = None   # tiempo (s) al cruzar SALE
+        self._frames_cruce   = 0      # frames (muestras) procesados DURANTE el cruce (N de Nyquist)
         self.ultima_velocidad = None  # km/h del ultimo carro capturado (None si no medible)
 
     # ── lineas en pixeles (para dibujar) ──────────────────────────────────
@@ -189,11 +190,13 @@ class ZonaDeteccion:
             if en_zona:
                 self._estado      = "rastreando"
                 self._t_entra     = t            # cronometro: el CARRO cruzo ENTRA
+                self._frames_cruce = 1           # muestra de ENTRA (N empieza a contar)
                 self._frame_entra = frame_captura.copy()
                 self._evaluar(frame, placa_bbox, carro_bbox, frame_captura)
 
         elif self._estado == "rastreando":
             if en_zona:
+                self._frames_cruce += 1          # otra muestra dentro de la zona
                 self._evaluar(frame, placa_bbox, carro_bbox, frame_captura)
             elif not dentro_s:
                 # el CARRO cruzo la linea CERCANA (SALE) -> cruce completo
@@ -275,6 +278,10 @@ class ZonaDeteccion:
             "ancho_px":     self._mejor_ancho,
             "tiempo_cruce": self._tiempo_cruce(),   # resta directa (s)
             "con_placa":    self._mejor_tiene_placa,  # True = mejor con placa ; False = respaldo de carro
+            # metricas de MUESTREO del cruce (para el log de Nyquist):
+            "t_entra":      self._t_entra,
+            "t_sale":       self._t_sale,
+            "frames_cruce": self._frames_cruce,     # N = muestras del evento
         }
         self._reset()
         return captura
@@ -306,6 +313,7 @@ class ZonaDeteccion:
         self._frame_sale    = None
         self._t_entra       = None
         self._t_sale        = None
+        self._frames_cruce  = 0
         self._perdidos      = 0
 
     @property

@@ -503,10 +503,17 @@ def list_cameras() -> dict:
     """Lista las camaras conectadas con su NOMBRE (DirectShow), en el MISMO orden que
     el indice de OpenCV. Asi el frontend deja elegir 'Camo' por nombre sin adivinar el
     numero. Usa pygrabber; si no esta instalado, devuelve lista vacia con el error."""
+    # FastAPI corre el endpoint en un hilo del threadpool donde COM NO esta inicializado.
+    # DirectShow (pygrabber) necesita CoInitialize en ESTE hilo -> lo hacemos y liberamos.
     try:
-        from pygrabber.dshow_graph import FilterGraph
-        nombres = FilterGraph().get_input_devices()
-        return {"cameras": [{"index": i, "name": n} for i, n in enumerate(nombres)]}
+        import comtypes
+        comtypes.CoInitialize()
+        try:
+            from pygrabber.dshow_graph import FilterGraph
+            nombres = FilterGraph().get_input_devices()
+            return {"cameras": [{"index": i, "name": n} for i, n in enumerate(nombres)]}
+        finally:
+            comtypes.CoUninitialize()
     except Exception as exc:
         return {"cameras": [], "error": f"No se pudo enumerar camaras: {exc}"}
 

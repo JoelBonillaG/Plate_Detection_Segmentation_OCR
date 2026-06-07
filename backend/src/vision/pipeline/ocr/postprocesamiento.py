@@ -36,16 +36,15 @@ from .test_plate import prepare_crop   # mismo preprocesado por-caracter del ent
 _MAX_CANDIDATOS = 12
 
 
-def _predecir(crop, modelo, th, tw, canales):
-    """Softmax del clasificador para UN crop de caracter (gris)."""
+def _preparar(crop, th, tw, canales):
+    """Preprocesa UN crop a la entrada del clasificador (sin la dimension de batch)."""
     gris = crop if crop.ndim == 2 else cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     proc = prepare_crop(gris, th, tw)
     if canales == 1:
         proc = np.expand_dims(proc, axis=-1)
     elif canales == 3:
         proc = cv2.cvtColor(proc.astype(np.uint8), cv2.COLOR_GRAY2RGB).astype("float32")
-    proc = np.expand_dims(proc, axis=0)
-    return modelo.predict(proc, verbose=0)[0]
+    return proc
 
 
 def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
@@ -70,12 +69,17 @@ def leer_placa(crops, modelo, classes, num_letras=3, digitos_validos=(4, 3),
     letras_ids = [i for i, c in enumerate(classes) if c.isalpha()]
     digitos_ids = [i for i, c in enumerate(classes) if c.isdigit()]
 
+    # TODOS los crops validos se infieren en UN solo batch (1 pasada en vez de N).
+    # La clasificacion es por-muestra independiente -> mismo resultado que crop por crop.
+    validos = [c for c in crops if c is not None and c.size > 0]
+    if not validos:
+        return ("", []) if return_conf else ""
+    batch = np.stack([_preparar(c, th, tw, canales) for c in validos])
+    preds = modelo(batch, training=False).numpy()   # (N, num_clases); orden preservado
+
     # candidato por caja: mejor LETRA y mejor DIGITO (+ su confianza) y la altura
     candidatos = []
-    for crop in crops:
-        if crop is None or crop.size == 0:
-            continue
-        pred = _predecir(crop, modelo, th, tw, canales)
+    for crop, pred in zip(validos, preds):
         il = max(letras_ids, key=lambda i: pred[i])
         idg = max(digitos_ids, key=lambda i: pred[i])
         candidatos.append({

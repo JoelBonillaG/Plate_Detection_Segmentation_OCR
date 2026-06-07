@@ -6,22 +6,22 @@
   "stream_jpeg_q": 60,
   "linea_entra": [
     [
-      0.4789473684210526,
-      0.46842105263157896
+      0.7046875,
+      0.43333333333333335
     ],
     [
-      0.7157894736842105,
-      0.5573099415204679
+      0.85546875,
+      0.4847222222222222
     ]
   ],
   "linea_sale": [
     [
-      0.11875,
-      0.5888888888888889
+      0.2875,
+      0.5944444444444444
     ],
     [
-      0.65859375,
-      0.9527777777777777
+      0.74375,
+      0.9902777777777778
     ]
   ],
   "min_ancho_px": 60,
@@ -31,8 +31,8 @@
   "fps_fallback": 30.0,
   "inferencia_cada": 1,
   "detectar_carros": false,
-  "tolerancia_carro": 3,
-  "tolerancia_placa": 12,
+  "tolerancia_carro": 5,
+  "tolerancia_placa": 17,
   "calibrar": false,
   "mostrar_ventana": false,
   "reconectar": true,
