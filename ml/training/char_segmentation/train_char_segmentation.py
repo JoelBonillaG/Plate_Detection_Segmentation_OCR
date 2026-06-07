@@ -16,14 +16,13 @@ PROJECT_ROOT = _HERE.resolve().parents[1]
 DATASETS_ROOT = PROJECT_ROOT / "datasets"
 RAW_DATASETS = DATASETS_ROOT / "raw"
 MODELS_ROOT = PROJECT_ROOT / "models"
-# Cada dataset declara si se filtra por calidad, su tope de placas y los splits
-# donde aporta. Los datos extranjeros se destinan principalmente a entrenamiento,
-# mientras que la validacion prioriza el dominio objetivo.
+
+
 DATASETS = [
-    # Base de India con cajas de caracteres limpias.
+
     {"name": "india_base", "path": RAW_DATASETS / "india_char_segmentation",
      "filter": False, "max": 0, "splits": ("train", "valid")},
-    # Recortes reales de Ecuador generados desde el dataset de vehiculos completos.
+
     {"name": "ecuador_real", "path": DATASETS_ROOT / "processed" / "ecuador_plate_crops",
      "filter": False, "max": 0,    "splits": ("train",)},
     {"name": "brasil",  "path": RAW_DATASETS / "brazil_plates",
@@ -233,10 +232,7 @@ def random_affine(image, target):
 
 def random_perspective(image, target, max_warp):
     # Perspectiva (HOMOGRAFIA): simula la placa vista DE LADO o desde arriba/abajo,
-    # donde los lados dejan de ser paralelos y forman un TRAPECIO. La afin NO puede
-    # hacer esto (conserva el paralelismo) -> esta es la UNICA augmentacion que
-    # reproduce la distorsion real de una captura oblicua, que es justo el caso que
-    # rompia la segmentacion. Aplica la MISMA transformacion a imagen y target.
+
     h, w = image.shape[:2]
     src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])          # TL, TR, BR, BL
     # jitter INDEPENDIENTE por esquina -> cubre inclinacion lateral, vertical y mixta.
@@ -266,8 +262,7 @@ def random_perspective(image, target, max_warp):
 
 
 def augment_pair(image, target, persp_prob=0.5, persp_warp=0.12):
-    # Perspectiva PRIMERO: es la distorsion dominante (punto de vista oblicuo). La
-    # afin va despues para anadir rotacion/shear residual sobre la placa ya inclinada.
+    # Perspectiva PRIMERO: es la distorsion dominante (punto de vista oblicuo).
     if random.random() < persp_prob:
         image, target = random_perspective(image, target, persp_warp)
 
@@ -293,7 +288,6 @@ def augment_pair(image, target, persp_prob=0.5, persp_warp=0.12):
 
 class CharMaskSequence(tf.keras.utils.Sequence):
     # Lee labels en formato txt (clase x y w h) y construye mascaras para la U-Net.
-    # NO usa el modelo/algoritmo YOLO: solo aprovecha ese formato de archivo de labels.
     def __init__(self, pairs, height, width, batch_size, sep_ratio, shrink_y,
                  border_weight, shuffle=True, augment=False,
                  persp_prob=0.5, persp_warp=0.12, **kwargs):
@@ -415,9 +409,7 @@ class MaskedBinaryIoU(tf.keras.metrics.BinaryIoU):
 
 
 def evaluate_on_test(q):
-    """Carga el mejor modelo y reporta dice/IoU sobre el split 'test' (UK+Brasil,
-    NUNCA entrenado). Es un test de GENERALIZACION en dominio foraneo; para la verdad
-    de Ecuador usa evaluate_segmentation.py sobre capturas reales."""
+
     model_path = (Path(EVAL_MODEL) if EVAL_MODEL
                   else OUTPUT_DIR / f"best_{MODEL_NAME}")
     if not model_path.exists():
@@ -471,8 +463,7 @@ def main():
     print(f"Train total: {len(train_pairs)}")
     print(f"Valid total: {len(valid_pairs)}")
 
-    # Justificacion formula docente adaptada a U-Net (fully convolutional, sin Dense)
-    # Bridge = bottleneck: 256x96 / (2^3) = 32x12 = 384 posiciones x 256 filtros
+ 
     bridge_positions = (WIDTH // 8) * (HEIGHT // 8)
     bridge_active    = int(256 * (1 - 0.30))
     required_pixels  = bridge_positions * bridge_active * 1
@@ -559,7 +550,7 @@ def main():
         epochs=EPOCHS,
         callbacks=callbacks,
         workers=max(1, WORKERS),
-        use_multiprocessing=False,   # Windows: hilos, no procesos
+        use_multiprocessing=False,  
         max_queue_size=16,
     )
 

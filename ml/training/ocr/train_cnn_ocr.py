@@ -129,7 +129,6 @@ def build_model(image_size, num_classes):
             layers.GlobalAveragePooling2D(),
 
             # La capa densa compacta reduce sobreajuste y mantiene la capacidad
-            # suficiente para clasificar las 36 clases alfanumericas.
             layers.Dense(32, activation="relu", kernel_regularizer=l2),
             layers.BatchNormalization(),
             layers.Dropout(0.50),

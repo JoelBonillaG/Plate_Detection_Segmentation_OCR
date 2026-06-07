@@ -1,4 +1,4 @@
-﻿"""
+"""
 Postprocesamiento del clasificador de caracteres.
 
 El modulo fuerza el formato de placa ecuatoriana sobre las cajas entregadas por
