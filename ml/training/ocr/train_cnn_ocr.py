@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATASET_DIR = PROJECT_ROOT / "datasets" / "processed" / "ocr_characters_final"
 OUTPUT_DIR = PROJECT_ROOT / "models" / "ocr" / "Modelos"
 
-# Configuracion de entrenamiento. Para cambiar el experimento, edita aqui.
+# Parametros del entrenamiento del clasificador de caracteres.
 MODEL_NAME = "cnn_ocr.keras"
 CLASSES_NAME = "classes.txt"
 IMAGE_SIZE = 64
@@ -68,7 +68,7 @@ def augment_char(image):
 
 
 class CharSequence(tf.keras.utils.Sequence):
-    # Recibe arrays numpy ya cargados en RAM — sin I/O por epoch.
+    # La secuencia trabaja con arrays cargados en memoria para evitar I/O por epoca.
     def __init__(self, images, labels, batch_size, shuffle, augment, **kwargs):
         super().__init__(**kwargs)
         self.images    = images
@@ -128,8 +128,7 @@ def build_model(image_size, num_classes):
             layers.BatchNormalization(),
             layers.GlobalAveragePooling2D(),
 
-            # Dense reducido: 256 features × 16 activas (dropout 0.5) × 36 clases = 147,456
-            # K-Fold k=3 sobre 103k datos: 3 × 68,907 = 206,721 > 147,456
+            # La capa densa compacta reduce sobreajuste y mantiene la capacidad
             layers.Dense(32, activation="relu", kernel_regularizer=l2),
             layers.BatchNormalization(),
             layers.Dropout(0.50),
@@ -212,7 +211,7 @@ def main():
 
     save_class_names(class_names, output_dir / CLASSES_NAME)
 
-    # Combinar train + valid para K-Fold. Test queda completamente aparte.
+    # El conjunto de prueba permanece separado de la validacion cruzada.
     print("\nCargando train+valid a RAM...")
     tv_samples = (list_samples(dataset_dir / "train", class_names) +
                   list_samples(dataset_dir / "valid", class_names))
@@ -225,7 +224,7 @@ def main():
     print(f"K-Fold k={FOLDS}: train por fold ~{len(tv_samples)*(FOLDS-1)//FOLDS:,}")
     print(f"Total efectivo: {FOLDS} x {len(tv_samples)*(FOLDS-1)//FOLDS:,} = "
           f"{FOLDS * (len(tv_samples)*(FOLDS-1)//FOLDS):,} > "
-          f"{256*16*num_classes:,} (requerido) ✓")
+          f"{256*16*num_classes:,} (requerido) OK")
 
     test_seq = CharSequence(test_images, test_labels, BATCH_SIZE,
                             shuffle=False, augment=False)

@@ -24,10 +24,9 @@ DEFAULT_MODEL = PROJECT_ROOT / "ml" / "models" / "char_segmentation" / "Models" 
 
 
 def split_box_by_projection(binary, x, y, w, h, expected_w):
-    # Blob mas ancho que ~1 char = varios chars pegados. Cuantos caben se estima por
-    # el ANCHO esperado (derivado de la ALTURA, que NUNCA se fusiona) -> robusto aunque
-    # TODOS los chars vengan fusionados. Prior de pitch uniforme: cortes en i*w/n,
-    # ajustados al valle real (minimo de proyeccion) mas cercano.
+    # Region mas ancha que un caracter: se estima cuantos caracteres caben segun
+    # el ancho esperado derivado de la altura. Los cortes parten de un espaciado
+    # uniforme y se ajustan al valle de proyeccion mas cercano.
     n = max(1, int(round(w / expected_w)))
     if n <= 1:
         return [(x, y, w, h)]
@@ -71,7 +70,7 @@ def mask_to_boxes(mask, original_shape, threshold, min_area_ratio, padding,
 
     binary = (mask >= threshold).astype("uint8") * 255
     kernel = np.ones((3, 3), np.uint8)
-    # Solo OPEN (quita ruido). CLOSE pegaba chars vecinos -> eliminado.
+    # Apertura morfologica para retirar ruido sin unir caracteres vecinos.
     binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
 
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

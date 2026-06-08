@@ -2,14 +2,15 @@
 (Modelo_DeteccionPlacasEc) para que queden a la MISMA escala que los demas
 datasets (recortes de placa, no escena completa).
 
-Por que: en ese dataset el char mide ~3% del alto de la imagen (carro entero);
+Razon: en ese dataset el caracter mide ~3% del alto de la imagen (carro entero);
 las otras fuentes son recortes donde el char mide ~45%. Si se mezcla crudo, al
-redimensionar a 256x96 la placa queda en ~3 px y la red aprende basura.
+redimensionar a 256x96 la placa queda en ~3 px y la red aprende informacion
+poco util.
 
 Cada imagen trae la geometria de la placa (clase 'car plate', poligono o bbox).
 Se recorta por esa placa + padding y:
-  - si la foto trae cajas de CHARS  -> recorte + label renormalizado  (ENTRENO)
-  - si solo trae la placa           -> recorte sin label             (TEST VISUAL)
+  - si la foto trae cajas de caracteres -> recorte + label renormalizado
+  - si solo trae la placa               -> recorte sin label para evaluacion visual
 
 Salidas (one-shot, se regeneran con --clean):
   Datasets/ecuador_real_crops/train/{images,labels}   (placas con chars)

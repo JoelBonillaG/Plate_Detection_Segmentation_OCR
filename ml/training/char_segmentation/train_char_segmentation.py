@@ -16,27 +16,23 @@ PROJECT_ROOT = _HERE.resolve().parents[1]
 DATASETS_ROOT = PROJECT_ROOT / "datasets"
 RAW_DATASETS = DATASETS_ROOT / "raw"
 MODELS_ROOT = PROJECT_ROOT / "models"
-# Cada dataset declara: si se FILTRA por calidad, su TOPE de placas y en que SPLITS
-# aporta. Decision clave: lo foraneo (UK/Brasil) va SOLO a train -> ensena geometria
-# y angulos; valid queda SOLO con Ecuador -> el checkpoint (val_dice) se elige por el
-# desempeno en el dominio OBJETIVO, no por placas extranjeras.
+
+
 DATASETS = [
-    # base "lpr" = India (KA=Karnataka). Char-bbox limpios -> sin filtro. Aporta valid (proxy).
+
     {"name": "india_base", "path": RAW_DATASETS / "india_char_segmentation",
      "filter": False, "max": 0, "splits": ("train", "valid")},
-    # Ecuador REAL (dominio destino). Recortes generados por crop_ecuador_plates.py desde el
-    # dataset de carro-entero (22 placas unicas con chars, ya a escala de recorte). filter=False:
-    # son reales y a proposito INCLINADAS -> el filtro de calidad las rechazaria por salto_altura.
+
     {"name": "ecuador_real", "path": DATASETS_ROOT / "processed" / "ecuador_plate_crops",
      "filter": False, "max": 0,    "splits": ("train",)},
     {"name": "brasil",  "path": RAW_DATASETS / "brazil_plates",
-     "filter": True,  "max": 0,    "splits": ("train", "test")},   # buen match -> sin tope
+     "filter": True,  "max": 0,    "splits": ("train", "test")},
     {"name": "uk",      "path": RAW_DATASETS / "uk_plates",
-     "filter": True,  "max": 3000, "splits": ("train", "test")},   # ruidoso -> filtrar + capar
+     "filter": True,  "max": 3000, "splits": ("train", "test")},
 ]
 OUTPUT_DIR = MODELS_ROOT / "char_segmentation" / "Models"
 
-# Configuracion de entrenamiento. Para cambiar el experimento, edita aqui.
+# Parametros del entrenamiento del modelo de segmentacion.
 MODEL_NAME = "char_segmentation_unet.keras"
 HEIGHT = 96
 WIDTH = 256
@@ -67,21 +63,18 @@ def find_image(images_dir, stem):
 
 
 def plate_quality(boxes, min_chars, max_adj_ratio, max_row_spread):
-    """(ok, motivo). Acepta placas de 1 fila con chars de altura coherente,
-    permitiendo cambio GRADUAL por perspectiva (placa de lado); rechaza saltos de
-    altura abruptos (subtexto/vanity UK) y placas multi-fila."""
+    """Evalua si una placa mantiene una fila de caracteres geometricamente coherente."""
     if len(boxes) < min_chars:
         return False, "pocos_chars"
     bx = sorted(boxes, key=lambda b: b[0])             # izq -> der
     hs = [b[3] for b in bx]
     if min(hs) <= 0:
         return False, "caja_invalida"
-    # 1) salto de altura entre chars VECINOS -> subtexto/vanity, NO perspectiva
-    #    (la perspectiva cambia la altura GRADUAL, vecinos quedan parecidos).
+    # La perspectiva cambia la altura de forma gradual entre caracteres vecinos.
     for a, b in zip(hs, hs[1:]):
         if max(a, b) / min(a, b) > max_adj_ratio:
             return False, "salto_altura"
-    # 2) multi-fila -> y_center muy disperso vs altura tipica (permite tilt de 1 fila).
+    # La dispersion vertical alta indica una placa de multiples filas.
     ys = [b[1] for b in bx]
     if (max(ys) - min(ys)) > max_row_spread * statistics.median(hs):
         return False, "multi_fila"
@@ -151,11 +144,10 @@ def parse_boxes(label_path):
 
 def build_targets(boxes, height, width, sep_ratio, shrink_y, border_weight):
     # Devuelve target (H, W, 2):
-    #   canal 0 = mascara de chars. Cada char se pinta a ANCHO COMPLETO (crops buenos
-    #             para el OCR) y solo se TALLA un separador fino entre chars vecinos,
-    #             de modo que queden como instancias separables sin perder ancho.
+    #   canal 0 = mascara de caracteres. Cada caracter se pinta a ancho completo
+    #             y se separa de sus vecinos mediante una franja fina.
     #   canal 1 = mapa de pesos: sube el costo de equivocarse en ese separador, asi la
-    #             red aprende a NO fusionar chars pegados (idea de U-Net, Ronneberger 2015).
+    #             red aprende a separar caracteres contiguos.
     mask = np.zeros((height, width), dtype="float32")
     weight = np.ones((height, width), dtype="float32")
     painted = []
@@ -240,10 +232,7 @@ def random_affine(image, target):
 
 def random_perspective(image, target, max_warp):
     # Perspectiva (HOMOGRAFIA): simula la placa vista DE LADO o desde arriba/abajo,
-    # donde los lados dejan de ser paralelos y forman un TRAPECIO. La afin NO puede
-    # hacer esto (conserva el paralelismo) -> esta es la UNICA augmentacion que
-    # reproduce la distorsion real de una captura oblicua, que es justo el caso que
-    # rompia la segmentacion. Aplica la MISMA transformacion a imagen y target.
+
     h, w = image.shape[:2]
     src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])          # TL, TR, BR, BL
     # jitter INDEPENDIENTE por esquina -> cubre inclinacion lateral, vertical y mixta.
@@ -273,8 +262,7 @@ def random_perspective(image, target, max_warp):
 
 
 def augment_pair(image, target, persp_prob=0.5, persp_warp=0.12):
-    # Perspectiva PRIMERO: es la distorsion dominante (punto de vista oblicuo). La
-    # afin va despues para anadir rotacion/shear residual sobre la placa ya inclinada.
+    # Perspectiva PRIMERO: es la distorsion dominante (punto de vista oblicuo).
     if random.random() < persp_prob:
         image, target = random_perspective(image, target, persp_warp)
 
@@ -300,7 +288,6 @@ def augment_pair(image, target, persp_prob=0.5, persp_warp=0.12):
 
 class CharMaskSequence(tf.keras.utils.Sequence):
     # Lee labels en formato txt (clase x y w h) y construye mascaras para la U-Net.
-    # NO usa el modelo/algoritmo YOLO: solo aprovecha ese formato de archivo de labels.
     def __init__(self, pairs, height, width, batch_size, sep_ratio, shrink_y,
                  border_weight, shuffle=True, augment=False,
                  persp_prob=0.5, persp_warp=0.12, **kwargs):
@@ -422,9 +409,7 @@ class MaskedBinaryIoU(tf.keras.metrics.BinaryIoU):
 
 
 def evaluate_on_test(q):
-    """Carga el mejor modelo y reporta dice/IoU sobre el split 'test' (UK+Brasil,
-    NUNCA entrenado). Es un test de GENERALIZACION en dominio foraneo; para la verdad
-    de Ecuador usa evaluate_segmentation.py sobre capturas reales."""
+
     model_path = (Path(EVAL_MODEL) if EVAL_MODEL
                   else OUTPUT_DIR / f"best_{MODEL_NAME}")
     if not model_path.exists():
@@ -478,8 +463,7 @@ def main():
     print(f"Train total: {len(train_pairs)}")
     print(f"Valid total: {len(valid_pairs)}")
 
-    # Justificacion formula docente adaptada a U-Net (fully convolutional, sin Dense)
-    # Bridge = bottleneck: 256x96 / (2^3) = 32x12 = 384 posiciones x 256 filtros
+ 
     bridge_positions = (WIDTH // 8) * (HEIGHT // 8)
     bridge_active    = int(256 * (1 - 0.30))
     required_pixels  = bridge_positions * bridge_active * 1
@@ -566,7 +550,7 @@ def main():
         epochs=EPOCHS,
         callbacks=callbacks,
         workers=max(1, WORKERS),
-        use_multiprocessing=False,   # Windows: hilos, no procesos
+        use_multiprocessing=False,  
         max_queue_size=16,
     )
 

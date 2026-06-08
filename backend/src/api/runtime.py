@@ -1,27 +1,23 @@
-"""Estado de runtime COMPARTIDO entre el proceso de la API y el de vision.
+"""Estado de runtime compartido entre el proceso de la API y el de vision.
 
-Son procesos separados, asi que el estado no puede vivir en memoria: se persiste
-en un JSON en storage/. La API lo escribe (endpoints del frontend) y vision lo
-lee al capturar cada evento.
-
-Uso actual: "speed boost" para la presentacion -> suma km/h a la velocidad
-detectada (los carros del video van lento y nunca pasan el limite de 20 km/h,
-asi se puede demostrar la sancion del sistema difuso en tiempo real).
+Son procesos separados, por lo que el estado se persiste en storage/. La API lo
+actualiza desde los endpoints del frontend y vision lo lee al capturar eventos.
+Tambien almacena el ajuste opcional de velocidad usado en pruebas controladas
+del sistema difuso.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-# storage/ a nivel raiz del proyecto (mismo dir que usan API y vision).
+# Archivo de estado compartido en la raiz del proyecto.
 _FILE = Path(__file__).resolve().parents[3] / "storage" / "runtime_config.json"
 
 _DEFAULT = {
     "speed_boost_enabled": False,
     "speed_boost_kmh": 0.0,
-    # fuente de video que la vision debe usar (hot-swap sin reiniciar el proceso).
-    # source = ruta absoluta del .mp4 o "live"; source_version se incrementa en cada
-    # cambio -> la vision detecta el cambio y reabre la fuente.
+    # Fuente de video que el proceso de vision debe usar.
+    # source_version se incrementa para reabrir la fuente cuando cambia.
     "source": None,
     "source_version": 0,
     # config_version sube cuando el frontend calibra lineas/distancia (camara/config.json):
