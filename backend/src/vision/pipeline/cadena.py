@@ -21,10 +21,10 @@ import deteccion_carros as etapa0
 import deteccion_placas as etapa1
 import filtros as etapa_filtros
 import segmentacion as etapa2
-import ocr as etapa3
+import clasificacion_caracteres as etapa3
 # Postprocesamiento de cajas y formato de placa.
 from segmentacion import postprocesamiento as seg_pp
-from ocr import postprocesamiento as ocr_pp
+from clasificacion_caracteres import postprocesamiento as ocr_pp
 from deteccion_placas import deskew_rotacion as deskew   # enderezado por ROTACION (Hough)
 
 # Criterio de validez de placa: una placa ecuatoriana tiene 6-7 caracteres
