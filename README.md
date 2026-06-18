@@ -28,14 +28,15 @@ quiere persistir eventos, publicar WebSocket o servir el video MJPEG.
 ## Componentes
 
 - `backend/src/vision`: pipeline de vision y captura por camara.
-- `backend/src/app`: API FastAPI, eventos, WebSocket, MJPEG y correo.
+- `backend/src/api`: API FastAPI, eventos, WebSocket, MJPEG y correo.
 - `backend/database`: esquema PostgreSQL y seed.
+- `ml`: datasets, modelos entrenados y scripts de entrenamiento.
 - `frontend`: interfaz web del operador.
 
 ## Documentacion por modulo
 
 - [Backend](backend/README.md)
-- [API](backend/src/app/README.md)
+- [API](backend/src/api/README.md)
 - [Modelo de datos](backend/database/README.md)
 - [Camara](backend/src/vision/camara/README.md)
 - [Pipeline](backend/src/vision/pipeline/README.md)

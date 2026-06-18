@@ -7,13 +7,12 @@ se inclina el texto/placa, y ROTAR por ese angulo. NO corrige perspectiva (eso
 pediria las 4 esquinas); corrige la inclinacion (placa "chueca pero de frente"),
 que es el caso comun cuando el carro pasa casi frontal a la camara.
 
-Por que Hough y no cazar esquinas: buscar las 4 esquinas exactas es fragil
+Por que Hough y no esquinas: buscar las 4 esquinas exactas es fragil
 (reflejos, carroceria, banda ECUADOR). Hough solo necesita "hacia donde se inclina
-TODO en conjunto" -> promedia muchos bordes -> mucho mas estable.
+la estructura general" -> promedia muchos bordes -> mucho mas estable.
 
 Decisiones:
-  - Solo rota si |angulo| > `umbral_grados` -> NO remuestrea placas ya derechas
-    (rotar siempre suaviza un poco; si no hace falta, no se toca = max calidad).
+  - Solo rota si |angulo| > `umbral_grados` para evitar remuestrear placas frontales.
   - Ignora |angulo| > `max_grados` -> estimacion poco fiable -> deja el crop igual.
   - Usa la MEDIANA de los angulos de las lineas (robusta a lineas sueltas raras).
   - Al rotar EXPANDE el lienzo (no corta esquinas), INTER_CUBIC (menos blur) y

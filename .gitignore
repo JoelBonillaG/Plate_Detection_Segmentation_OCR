@@ -18,6 +18,7 @@ test_resultados
 *env
 mmtest
 Car detector.v1i.yolov11
+ml/datasets/**
 
 # Python
 __pycache__/
@@ -36,10 +37,7 @@ storage/**
 backend/src/vision/camara/capturas/**
 *mp4
 
-# Recortes/tests de segmentacion generados (regenerables con crop_ecuador_plates.py):
-# incluye labels .txt que el ignore de imagenes no cubre.
-**/Test_Placas_Ecuador/
-**/ecuador_real_crops/
+# Recortes/tests de segmentacion generados (regenerables con crop_ecuador_plates.py).
 **/test_resultados/
 **/test_resultados_old/
 

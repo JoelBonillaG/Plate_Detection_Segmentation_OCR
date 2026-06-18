@@ -8,8 +8,8 @@ Lo que esta abajo solo LEE ese archivo y expone los valores como constantes del
 modulo (asi el resto del codigo y `from camara import DETECTAR_CARROS` siguen
 funcionando igual).
 
-Modo calibracion (calibrar=true en config.json): se puede ajustar TODO por
-interfaz, sin tocar el codigo:
+Modo calibracion (calibrar=true en config.json): los parametros principales se
+pueden ajustar desde la interfaz:
     - arrastrar los extremos de las lineas con el mouse
     - sliders (arriba de la ventana) para los 3 gates
     - overlay con ancho de placa (px) y nitidez en vivo
@@ -29,7 +29,7 @@ from lineas import ZonaDeteccion, nitidez
 _AQUI       = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(_AQUI, "config.json")
 
-# valores por defecto -> sirven si falta config.json o alguna clave (no rompe).
+# Valores por defecto usados cuando falta config.json o alguna clave.
 _DEFAULTS = {
     "camara_idx": 0,
     "ventana_w": 1600,
@@ -78,10 +78,9 @@ def _par_lineas(p):
 
 CFG = cargar_config()
 
-# paleta BGR (constantes visuales, no son configuracion). Tono "slate" sobrio,
-# texto anti-aliasing y paneles semi-transparentes -> overlay limpio y legible.
-COLOR_ENTRA   = (255, 176, 0)    # azul-cian: linea LEJANA (entra)
-COLOR_SALE    = (140, 210, 64)   # verde-teal: linea CERCANA (sale)
+# Paleta BGR para el overlay de monitoreo.
+COLOR_ENTRA   = (94, 197, 34)    # verde (#22c55e): linea LEJANA (entra)
+COLOR_SALE    = (68, 68, 239)    # rojo  (#ef4444): linea CERCANA (sale)
 COLOR_TRACK   = (96, 220, 130)   # verde: zona rastreando (acento activo)
 COLOR_PLACA   = (96, 200, 96)    # verde: caja de la placa
 COLOR_CARRO   = (200, 144, 56)   # azul acero: caja del carro
@@ -118,14 +117,13 @@ RECONECTAR_MAX_FALLOS = CFG["frames_antes_de_reconectar"]
 
 VENTANA       = "Detector de Placas"
 
-# los frames crudos (carro centrado, con placa) se guardan aqui -> materia prima
+# Directorio donde se almacenan los frames capturados para auditoria.
 CAPTURA_DIR   = os.path.join(_AQUI, "capturas")
 
 
 # ── dibujo ────────────────────────────────────────────────────────────────
-# Estilo: todo con cv2.LINE_AA (bordes suaves, no "escalonados"), etiquetas tipo
-# chip con fondo relleno y paneles semi-transparentes. Da un look limpio/pro en
-# vez del texto crudo grueso de antes.
+# El overlay usa bordes suavizados, etiquetas con fondo y paneles
+# semitransparentes para mantener legibilidad sobre el video.
 
 def _texto(frame, txt, org, escala=0.5, color=COLOR_TEXTO, grosor=1):
     cv2.putText(frame, txt, org, _FUENTE, escala, color, grosor, cv2.LINE_AA)
@@ -165,14 +163,11 @@ def dibujar_lineas(frame, zona: ZonaDeteccion, calibrar=False):
     s1, s2 = zona.sale_px(w, h)
 
     rastreando = zona.estado == "rastreando"
-    col_e = COLOR_TRACK if rastreando else COLOR_ENTRA
-    col_s = COLOR_TRACK if rastreando else COLOR_SALE
 
-    cv2.line(frame, e1, e2, col_e, 2, cv2.LINE_AA)
-    cv2.line(frame, s1, s2, col_s, 2, cv2.LINE_AA)
-
-    _chip(frame, "ENTRA", (e1[0] + 6, e1[1] + 6), col_e)
-    _chip(frame, "SALE",  (s1[0] + 6, s1[1] + 6), col_s)
+    # color fijo distingue cada linea (verde=ENTRA, rojo=SALE); sin etiquetas de texto.
+    # El estado rastreando/esperando se ve en la pildora de abajo-izquierda.
+    cv2.line(frame, e1, e2, COLOR_ENTRA, 2, cv2.LINE_AA)
+    cv2.line(frame, s1, s2, COLOR_SALE, 2, cv2.LINE_AA)
 
     # puntos arrastrables (solo calibracion): relleno + anillo blanco
     if calibrar:
@@ -181,7 +176,7 @@ def dibujar_lineas(frame, zona: ZonaDeteccion, calibrar=False):
             cv2.circle(frame, p, 6, (255, 255, 255), 1, cv2.LINE_AA)
 
     # pildora de estado, abajo-izquierda (siempre)
-    estado_txt = "RASTREANDO" if rastreando else "ESPERANDO"
+    estado_txt = "Rastreando" if rastreando else "Esperando"
     _chip(frame, estado_txt, (12, h - 32), COLOR_TRACK if rastreando else COLOR_MUTED)
 
 
@@ -208,17 +203,22 @@ def dibujar_velocidad(frame, zona):
         return
     w = frame.shape[1]
     txt = f"{zona.ultima_velocidad:.1f} km/h"
-    (tw, th), base = cv2.getTextSize(txt, _FUENTE, 0.7, 2)
-    x1 = w - tw - 28
-    y1 = 14
+    lab = "Velocidad"
+    (tw, th), _      = cv2.getTextSize(txt, _FUENTE, 0.7, 2)     # valor
+    (lw, lh), _      = cv2.getTextSize(lab, _FUENTE, 0.4, 1)     # etiqueta
+    pad, gap = 12, 12                                            # gap = separacion etiqueta<->valor
+    w_panel = max(tw, lw) + pad * 2
+    h_panel = pad + lh + gap + th + pad
     x2 = w - 12
-    y2 = y1 + th + base + 16
+    x1 = x2 - w_panel
+    y1 = 14
+    y2 = y1 + h_panel
     cap = frame.copy()
     cv2.rectangle(cap, (x1, y1), (x2, y2), _PANEL_BG, -1)
     cv2.addWeighted(cap, 0.66, frame, 0.34, 0, frame)
     cv2.rectangle(frame, (x1, y1), (x2, y2), _PANEL_BORDE, 1, cv2.LINE_AA)
-    _texto(frame, "VELOCIDAD", (x1 + 12, y1 + 4 + th - 4), 0.34, COLOR_MUTED, 1)
-    _texto(frame, txt, (x1 + 12, y2 - 9), 0.7, COLOR_TRACK, 2)
+    _texto(frame, lab, (x1 + pad, y1 + pad + lh), 0.4, COLOR_MUTED, 1)
+    _texto(frame, txt, (x1 + pad, y2 - pad), 0.7, COLOR_TRACK, 2)
 
 
 def dibujar_overlay(frame, zona, bbox):
@@ -227,13 +227,15 @@ def dibujar_overlay(frame, zona, bbox):
     if bbox is not None:
         ancho = bbox[2] - bbox[0]
         ok = ancho >= zona.min_ancho_px
-        filas.append((f"Ancho placa: {ancho}px  (min {zona.min_ancho_px})",
+        filas.append((f"Ancho placa: {ancho} px",
                       COLOR_TRACK if ok else COLOR_ALERTA))
     else:
         filas.append(("Sin deteccion de placa", COLOR_MUTED))
-    filas.append((f"Distancia lineas: {zona.distancia_m:.1f} m", COLOR_TEXTO))
-    filas.append(("[s] guardar     [q] salir", COLOR_MUTED))
-    _panel(frame, 12, 12, 360, filas, titulo="CALIBRACION")
+    # gates ajustables con teclado, AQUI mismo (sin trackbars feos arriba):
+    filas.append((f"Ancho min: {zona.min_ancho_px} px    [z -] [x +]", COLOR_TEXTO))
+    filas.append((f"Distancia: {zona.distancia_m:.1f} m       [c -] [v +]", COLOR_TEXTO))
+    filas.append(("[s] Guardar     [q] Salir", COLOR_MUTED))
+    _panel(frame, 12, 12, 390, filas, titulo="Calibracion")
 
 
 # ── mouse: arrastrar los extremos de las lineas ─────────────────────────────
@@ -265,18 +267,6 @@ def _hacer_mouse(estado, zona):
             estado["arrastrando"] = None
 
     return cb
-
-
-def _crear_trackbars(zona):
-    # SOLO los controles que de verdad se usan:
-    #   min_ancho -> gate de ancho minimo de placa para el OCR.
-    #   dist_cm   -> distancia real entre lineas (para la velocidad).
-    # Quitados: max_ancho y min_nitidez (en desuso: el "mejor" se elige por
-    # cercania, no por esos gates) -> no se muestran para no confundir.
-    cv2.createTrackbar("min_ancho", VENTANA, zona.min_ancho_px, 400,
-                       lambda v: setattr(zona, "min_ancho_px", v))
-    cv2.createTrackbar("dist_cm", VENTANA, int(zona.distancia_m * 100), 3000,
-                       lambda v: setattr(zona, "distancia_m", max(v, 1) / 100.0))
 
 
 def _guardar_config(zona):
@@ -313,11 +303,15 @@ def _guardar_captura(captura, nombre, carpeta_captura, al_capturar):
     # metricas de la CAMARA (la placa la resuelve el pipeline, capa aparte)
     vel = captura["velocidad"]
     dt  = captura["tiempo_cruce"]
+    n   = captura.get("frames_cruce", 0)              # N = muestras del cruce
+    fps_cruce = (n / dt) if (dt and dt > 0) else None  # Hz efectivos del cruce = N/dt
     datos = {
         "carro":           nombre,
         "con_placa":       captura.get("con_placa", None),  # False = mejor es respaldo de carro (sin placa detectada en vivo)
         "velocidad_kmh":   round(vel, 1) if vel is not None else None,
         "tiempo_cruce_s":  round(dt, 3) if dt is not None else None,
+        "frames_cruce":    n,                          # muestras del evento (Nyquist)
+        "fps_cruce_hz":    round(fps_cruce, 1) if fps_cruce else None,
         "nitidez":         round(captura["nitidez"], 1),
         "ancho_placa_px":  captura["ancho_px"],  # 0 si con_placa=False
         "hora":            time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -328,10 +322,13 @@ def _guardar_captura(captura, nombre, carpeta_captura, al_capturar):
     vel_txt = f"{vel:.1f} km/h" if vel is not None else "n/d"
     print(f"Carro {nombre}: vel={vel_txt}  -> {carpeta}")
 
-    # entregar el mejor frame al pipeline (etapa 0 -> OCR), si esta enganchado.
-    # se pasa la velocidad para que el backend la registre en el evento/DB.
+    # El mejor frame se entrega al pipeline cuando existe callback de captura.
+    # La velocidad y las metricas de muestreo se adjuntan al evento.
     if al_capturar is not None:
-        al_capturar(nombre, captura["mejor"], vel if vel is not None else 0.0)
+        al_capturar(nombre, captura["mejor"], vel if vel is not None else 0.0,
+                    metricas={"t_entra": captura.get("t_entra"),
+                              "t_sale": captura.get("t_sale"),
+                              "dt": dt, "frames_cruce": n, "fps_cruce": fps_cruce})
 
 
 # ── loop principal ──────────────────────────────────────────────────────────
@@ -480,6 +477,28 @@ def _leer_fuente_runtime():
     return fuente, ver
 
 
+def _leer_config_version():
+    """config_version desde runtime_config.json: sube cada vez que el frontend calibra
+    las lineas/distancia -> el loop recrea la zona en caliente (sin reiniciar)."""
+    try:
+        with open(_RUNTIME_FILE, encoding="utf-8") as f:
+            return int(json.load(f).get("config_version", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _zona_desde_config(tolerancia, rastrear_por):
+    """Crea una ZonaDeteccion leyendo las lineas + distancia FRESCAS de config.json.
+    Asi el calibrador del frontend (que escribe config.json) se aplica al recrear."""
+    cfg = cargar_config()
+    return ZonaDeteccion(
+        linea_entra=_par_lineas(cfg["linea_entra"]),
+        linea_sale=_par_lineas(cfg["linea_sale"]),
+        min_ancho_px=cfg["min_ancho_px"], max_ancho_px=cfg["max_ancho_px"],
+        min_nitidez=cfg["min_nitidez"], distancia_m=float(cfg["distancia_m"]),
+        tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
+
+
 def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             fuente=CAMARA_IDX, on_frame=None, on_fps=None):
     """
@@ -504,31 +523,34 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     on_frame / on_fps son los UNICOS puentes con el backend. Si no se pasan, esta
     camara es 100% standalone: no sabe nada de web ni de base de datos.
     """
-    es_archivo = isinstance(fuente, str) and "://" not in fuente
+    # "idle" = fuente DETENIDA desde el frontend (boton Detener): el proceso sigue
+    # vivo pero suelta la camara y no procesa nada hasta que se elija otra fuente.
+    en_idle = (fuente == "idle")
+    es_archivo = (not en_idle) and isinstance(fuente, str) and "://" not in fuente
 
-    fuente_video = FuenteVideo(fuente, es_archivo)
-    if not fuente_video.abierta():
-        print(f"No se pudo abrir la fuente: {fuente}")
-        return
+    fuente_video = None
+    if not en_idle:
+        fuente_video = FuenteVideo(fuente, es_archivo)
+        if not fuente_video.abierta():
+            print(f"No se pudo abrir la fuente: {fuente}")
+            return
 
     os.makedirs(carpeta_captura, exist_ok=True)
 
     # FPS de la fuente (para convertir frames -> segundos en video grabado)
-    fps = fuente_video.get_fps()
-    if not fps or fps <= 0:
-        fps = FPS_FALLBACK
+    fps = FPS_FALLBACK
+    if fuente_video is not None:
+        fps = fuente_video.get_fps()
+        if not fps or fps <= 0:
+            fps = FPS_FALLBACK
 
     rastrear_por = "carro" if DETECTAR_CARROS else "placa"
     tolerancia   = TOLERANCIA_CARRO if DETECTAR_CARROS else TOLERANCIA_PLACA
-    zona = ZonaDeteccion(linea_entra=LINEA_ENTRA, linea_sale=LINEA_SALE,
-                         min_ancho_px=MIN_ANCHO_PX, max_ancho_px=MAX_ANCHO_PX,
-                         min_nitidez=MIN_NITIDEZ, distancia_m=DISTANCIA_M,
-                         tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
+    zona = _zona_desde_config(tolerancia, rastrear_por)
     capturas_guardadas = 0
 
-    # guardar captura (3 imwrite + json + pipeline OCR) en un hilo aparte: asi NO
-    # frena el loop de video. 1 worker = se serializan las capturas en orden y el
-    # pipeline no corre concurrente. Los frames del dict ya son .copy(), no hay race.
+    # El guardado de captura y el pipeline se ejecutan en un hilo aparte para no
+    # frenar el video. Un solo worker serializa las capturas y evita concurrencia.
     guardado_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="captura")
 
     bbox        = None    # placa (lo que se rastrea)
@@ -553,9 +575,8 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         cv2.namedWindow(VENTANA, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(VENTANA, VENTANA_W, VENTANA_H)
 
-        # sliders + mouse solo con ventana (HighGUI los necesita)
+        # mouse para arrastrar las lineas (los gates se ajustan por teclado, ver overlay)
         if CALIBRAR:
-            _crear_trackbars(zona)
             estado_mouse = {"arrastrando": None}
             cv2.setMouseCallback(VENTANA, _hacer_mouse(estado_mouse, zona))
 
@@ -565,28 +586,40 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
     fuente_actual = fuente
     _rt = _leer_fuente_runtime()
     source_version = _rt[1] if _rt else 0    # arranca sincronizado: no swap inmediato
-    source_type = "video" if es_archivo else "live"
-    source_name = os.path.basename(str(fuente_actual)) if es_archivo else "EN VIVO"
+    config_version = _leer_config_version()  # arranca sincronizado: no reload inmediato
+    if en_idle:
+        source_type, source_name = "idle", "DETENIDO"
+    elif es_archivo:
+        source_type, source_name = "video", os.path.basename(str(fuente_actual))
+    else:
+        source_type, source_name = "live", "EN VIVO"
     print(f"[FUENTE] hot-swap ACTIVO. Inicial: {source_name} (v{source_version}). "
           f"Cambialo desde el frontend ('Elegir video' / 'EN VIVO').")
 
     while True:
-        # ── hot-swap: si la API pidio otra fuente, reabrir sin reiniciar (cada ~15 frames) ──
-        if n_frame % 15 == 0:
+        # ── hot-swap / DETENER: aplicar el cambio de fuente sin reiniciar el proceso.
+        #    En idle se revisa cada iteracion (n_frame no avanza); con fuente activa,
+        #    cada ~15 frames. fuente="idle" suelta la camara y deja el proceso vivo.
+        if en_idle or n_frame % 15 == 0:
             _rt = _leer_fuente_runtime()
             if _rt and _rt[1] != source_version:
                 source_version = _rt[1]
                 fuente_actual = _rt[0]
+                if fuente_video is not None:
+                    fuente_video.liberar()
+                    fuente_video = None
+                if fuente_actual == "idle":
+                    en_idle = True
+                    source_type, source_name = "idle", "DETENIDO"
+                    print("[FUENTE] DETENIDO -> camara liberada (proceso sigue vivo)")
+                    continue
+                en_idle = False
                 es_archivo = isinstance(fuente_actual, str) and "://" not in fuente_actual
-                fuente_video.liberar()
                 fuente_video = FuenteVideo(fuente_actual, es_archivo)
                 fps = fuente_video.get_fps()
                 if not fps or fps <= 0:
                     fps = FPS_FALLBACK
-                zona = ZonaDeteccion(linea_entra=LINEA_ENTRA, linea_sale=LINEA_SALE,
-                                     min_ancho_px=MIN_ANCHO_PX, max_ancho_px=MAX_ANCHO_PX,
-                                     min_nitidez=MIN_NITIDEZ, distancia_m=DISTANCIA_M,
-                                     tolerancia_frames=tolerancia, rastrear_por=rastrear_por)
+                zona = _zona_desde_config(tolerancia, rastrear_por)
                 t_video_inicio = None
                 n_frame = 0
                 ultima_version = -1
@@ -595,6 +628,23 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
                 source_name = os.path.basename(str(fuente_actual)) if es_archivo else "EN VIVO"
                 print(f"[FUENTE] cambiada -> {source_name} ({source_type})")
                 continue
+
+            # ── hot-reload de CALIBRACION (lineas/distancia) desde el frontend ──
+            cv_new = _leer_config_version()
+            if cv_new != config_version:
+                config_version = cv_new
+                if not en_idle and fuente_video is not None:
+                    zona = _zona_desde_config(tolerancia, rastrear_por)
+                    carro_bbox = bbox = None
+                print(f"[CONFIG] lineas/distancia recargadas (v{config_version})")
+
+        # ── DETENIDO (idle): no hay camara. Emitir status ~1/s y dormir. ──
+        if en_idle:
+            if on_fps is not None and time.time() - fps_t0 >= 1.0:
+                on_fps(0.0, source_type, source_name)
+                fps_t0, fps_frames = time.time(), 0
+            time.sleep(0.1)
+            continue
 
         # ── pacing tiempo real (solo video grabado) ──────────────────────────
         # objetivo = indice de frame que el reloj de pared dice que deberia mostrarse
@@ -617,19 +667,19 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         vivo, frame, version = fuente_video.leer()
         if not vivo:
             if es_archivo:
-                # video terminado -> reabrir (loop) para NO salir; el cambio de fuente
-                # se maneja arriba. Asi la presentacion sigue corriendo sin reiniciar.
+                # Video terminado: se reabre en bucle y el cambio de fuente se
+                # mantiene gestionado por el bloque superior.
                 fuente_video.liberar()
                 fuente_video = FuenteVideo(fuente_actual, es_archivo)
                 t_video_inicio = None
                 n_frame = 0
                 ultima_version = -1
                 continue
-            # fuente en vivo sin frame -> NO salir: esperar y seguir (el poll de arriba
-            # permite re-elegir otra fuente desde el frontend sin reiniciar el proceso).
+            # Fuente en vivo sin frame: se espera y se permite cambiar la fuente
+            # desde el frontend sin reiniciar el proceso.
             time.sleep(0.1)
             continue
-        # en vivo: si no hay frame nuevo, no reprocesar el mismo (no quema CPU)
+        # En vivo: si no hay frame nuevo, se evita reprocesar el mismo cuadro.
         if frame is None or (not es_archivo and version == ultima_version):
             time.sleep(0.005)
             continue
@@ -649,9 +699,8 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
         frame = cv2.resize(frame, (VENTANA_W, VENTANA_H))
         n_frame += 1
 
-        # tiempo de este frame: video -> indice REAL de fuente / FPS (NO n_frame,
-        # que con los saltos del pacing ya no corresponde al tiempo del video) ;
-        # vivo -> reloj real. Asi la velocidad sale correcta aunque se salten frames.
+        # Tiempo del frame: video -> indice real de fuente / FPS; vivo -> reloj
+        # real. Esto conserva el calculo de velocidad aunque se salten frames.
         t = (version / fps) if es_archivo else time.time()
 
         if detector is not None and n_frame % INFERENCIA_CADA == 0:
@@ -682,7 +731,7 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             if zona.punto_en_zona(xc, yc, VENTANA_W, VENTANA_H):
                 dibujar_caja_etiqueta(frame, bbox, "Placa vehicular", COLOR_PLACA)
 
-        dibujar_velocidad(frame, zona)   # velocidad: siempre visible (demo incluida)
+        dibujar_velocidad(frame, zona)
 
         if CALIBRAR:
             dibujar_overlay(frame, zona, bbox)
@@ -713,10 +762,21 @@ def iniciar(detector=None, al_capturar=None, carpeta_captura=CAPTURA_DIR,
             tecla = cv2.waitKey(1) & 0xFF
             if tecla == ord("q"):
                 break
-            if tecla == ord("s") and CALIBRAR:
-                _guardar_config(zona)
+            elif CALIBRAR:
+                # ajuste de gates por teclado (sin trackbars), reflejado en el overlay:
+                if tecla == ord("s"):
+                    _guardar_config(zona)
+                elif tecla == ord("z"):
+                    zona.min_ancho_px = max(0, zona.min_ancho_px - 5)
+                elif tecla == ord("x"):
+                    zona.min_ancho_px = min(400, zona.min_ancho_px + 5)
+                elif tecla == ord("c"):
+                    zona.distancia_m = max(0.1, round(zona.distancia_m - 0.1, 2))
+                elif tecla == ord("v"):
+                    zona.distancia_m = round(zona.distancia_m + 0.1, 2)
 
-    fuente_video.liberar()
+    if fuente_video is not None:
+        fuente_video.liberar()
     if MOSTRAR_VENTANA:
         cv2.destroyAllWindows()
     # esperar a que terminen las capturas en vuelo antes de cerrar

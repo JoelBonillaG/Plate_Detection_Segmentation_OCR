@@ -4,8 +4,8 @@ ETAPA 0 del pipeline: deteccion de vehiculos.
 Primer eslabon de la cadena: detecta el carro mas confiable del frame, lo recorta
 (con margen) y entrega ese recorte a la ETAPA 1 (placas). Correr la red de placas
 DENTRO del carro da zoom -> placa mas grande -> mejor OCR, y menos falsos
-positivos del fondo. Si el modelo de carros no esta entrenado, la cadena hace
-fallback: corre la placa sobre el frame completo (ver cadena.py).
+positivos del fondo. Si el modelo de carros no esta entrenado, la cadena usa el
+frame completo para detectar la placa (ver cadena.py).
 
 Tambien guarda auditoria en disco:
     - el frame con la caja dibujada        -> detecciones/<nombre>.jpg
@@ -20,24 +20,31 @@ API publica (la usa cadena.py):
     guardar_recorte(nombre, frame, bbox, cfg)    -> crop del carro
 """
 
-import os
 import json
+import os
+from pathlib import Path
 
 import cv2
 
 from .deteccion import cargar_yolo, detectar
 
-_AQUI = os.path.dirname(os.path.abspath(__file__))
+_AQUI = Path(__file__).resolve().parent
+_PROJECT_ROOT = _AQUI.parents[4]
 
 
 def _ruta_aqui(p):
-    """Resuelve una ruta relativa respecto a esta carpeta (la etapa)."""
-    return p if os.path.isabs(p) else os.path.normpath(os.path.join(_AQUI, p))
+    """Resuelve rutas absolutas, de proyecto o relativas a esta etapa."""
+    path = Path(p)
+    if path.is_absolute():
+        return str(path)
+    if path.parts and path.parts[0] in {"ml", "models", "datasets", "training", "storage"}:
+        return str((_PROJECT_ROOT / path).resolve())
+    return str((_AQUI / path).resolve())
 
 
 def cargar_config():
     """Config de la etapa (deteccion_carros/config.json): modelo, conf, margen, rutas."""
-    with open(os.path.join(_AQUI, "config.json"), encoding="utf-8") as f:
+    with open(_AQUI / "config.json", encoding="utf-8") as f:
         cfg = json.load(f)
     cfg["detecciones"] = _ruta_aqui(cfg.get("detecciones", "detecciones"))
     return cfg

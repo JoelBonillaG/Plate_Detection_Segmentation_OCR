@@ -30,7 +30,7 @@ CARPETAS = [
     os.path.join("deteccion_placas", "detecciones"),
     os.path.join("deteccion_placas", "enderezadas"),
     os.path.join("filtros", "filtradas"),
-    os.path.join("ocr", "salidas"),
+    os.path.join("clasificacion_caracteres", "salidas"),
     os.path.join("segmentacion", "segmentadas"),
 ]
 

@@ -11,7 +11,7 @@
 ```
 ┌─────────────────────┐        WS cliente         ┌──────────────────────┐
 │  PROCESO VISIÓN      │  ───── /ws/ingest ──────► │  PROCESO API         │
-│  src.vision.main     │   binario: JPEG anotado   │  src.app.main        │
+│  src.vision.main     │   binario: JPEG anotado   │  src.api.main        │
 │                      │   texto:  eventos/status  │  (FastAPI + uvicorn) │
 │  camara → cadena     │                           │                      │
 │  (captura + OCR)     │                           │  reenvía a:          │
@@ -34,7 +34,7 @@ hablan SOLO por un WebSocket (`bridge.py` → `/ws/ingest`). Por eso el video vi
 como JPEG por socket, no como objeto en memoria.
 
 - `src.vision.main` puede correr **solo** (standalone, sin API ni DB).
-- `src.app.main` (API) reenvía a los navegadores y persiste.
+- `src.api.main` (API) reenvía a los navegadores y persiste.
 - **Postgres** en Docker (puerto host `5433`).
 - **Frontend** React/Vite.
 

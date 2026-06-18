@@ -2,7 +2,7 @@
 
 Este directorio concentra el backend del sistema:
 
-- `src/app`: API FastAPI, WebSocket, MJPEG, eventos y notificaciones.
+- `src/api`: API FastAPI, WebSocket, MJPEG, eventos y notificaciones.
 - `src/vision`: pipeline en vivo y standalone para deteccion, segmentacion y OCR.
 - `database`: esquema PostgreSQL y datos seed.
 - `storage`: frames e imagenes guardadas por el pipeline.
@@ -32,7 +32,7 @@ Activar en Windows PowerShell:
 Instala primero lo del API y luego lo del pipeline:
 
 ```bash
-pip install -r src/app/requirements.txt
+pip install -r src/api/requirements.txt
 pip install -r src/vision/requirements.txt
 ```
 
@@ -68,7 +68,7 @@ raiz del repo y completa los valores que correspondan.
 Desde `backend/`:
 
 ```bash
-python -m uvicorn src.app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 O usa el atajo:
@@ -116,8 +116,8 @@ La ruta puede ser relativa o absoluta. La absoluta es mas segura.
 src.vision.main
   -> src.vision.integration
   -> PostgreSQL
-  -> src.app.realtime
-  -> src.app.main
+  -> src.api.realtime
+  -> src.api.main
 ```
 
 `src.vision.main` puede correr sin el backend web. `src.vision.integration` solo
@@ -139,7 +139,7 @@ Si quieres la experiencia completa del backend:
 
 ## Referencias utiles
 
-- [API del backend](src/app/README.md)
+- [API del backend](src/api/README.md)
 - [Modelo de datos](database/README.md)
 - [Camara](src/vision/camara/README.md)
 - [Pipeline](src/vision/pipeline/README.md)

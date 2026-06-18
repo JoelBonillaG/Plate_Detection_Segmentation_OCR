@@ -13,20 +13,26 @@ API publica (la usa cadena.py):
 """
 
 import os
+from pathlib import Path
 
 import cv2
+import numpy as np
 
 from .predict_char_segmentation import mask_to_boxes
 
-_AQUI       = os.path.dirname(os.path.abspath(__file__))
-_MODELO_DEF = os.path.join(_AQUI, "Models", "best_char_segmentation_unet.keras")
+_AQUI       = Path(__file__).resolve().parent
+_PROJECT_ROOT = _AQUI.parents[4]
+_MODELO_DEF = _PROJECT_ROOT / "ml" / "models" / "char_segmentation" / "Models" / "best_char_segmentation_unet.keras"
 
-# defaults espejo de los argparse de predict_char_segmentation.py
+# Valores por defecto equivalentes a los parametros del predictor CLI.
 _CFG_DEF = {
     "threshold": 0.50,
     "min_area_ratio": 0.002,
     "padding": 0.08,
     "char_aspect": 0.60,
+    # Refinamiento de cada caja hacia el componente conectado de tinta real.
+    # Corrige subsegmentaciones del U-Net sin invadir caracteres vecinos.
+    "refinar_tinta": True,
     "salidas": os.path.join(_AQUI, "segmentadas"),
 }
 
@@ -34,11 +40,59 @@ _CFG_DEF = {
 def cargar_modelo(ruta=None):
     """Carga el U-Net entrenado. Cargar una sola vez y reusar en el bucle."""
     import tensorflow as tf
-    return tf.keras.models.load_model(ruta or _MODELO_DEF, compile=False)
+    return tf.keras.models.load_model(str(ruta or _MODELO_DEF), compile=False)
 
 
 def _a_gris(img):
     return img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+
+def _refinar_cajas_por_tinta(gris, cajas, tol_alto=1.7):
+    """Expande cada caja al componente conectado de tinta que le corresponde.
+
+    El metodo binariza la tinta real de la placa, obtiene componentes conectados
+    y agranda cada caja solo dentro de limites seguros definidos por las cajas
+    vecinas. Asi se recuperan trazos omitidos por la mascara sin fusionar
+    caracteres.
+    """
+    if not cajas:
+        return cajas
+    H, W = gris.shape[:2]
+
+    blur = cv2.GaussianBlur(gris, (3, 3), 0)
+    _, tinta = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    tinta = cv2.morphologyEx(tinta, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    num, _lab, stats, _cen = cv2.connectedComponentsWithStats(tinta, connectivity=8)
+
+    alto_med = float(np.median([max(1, y2 - y1) for (x1, y1, x2, y2) in cajas]))
+    centros = [(x1 + x2) / 2.0 for (x1, y1, x2, y2) in cajas]
+
+    nuevas = []
+    for i, (x1, y1, x2, y2) in enumerate(cajas):
+        # Limites de seguridad definidos por el punto medio con cajas vecinas.
+        lim_izq = 0 if i == 0 else int((centros[i - 1] + centros[i]) / 2)
+        lim_der = W if i == len(cajas) - 1 else int((centros[i] + centros[i + 1]) / 2)
+        nx1, ny1, nx2, ny2 = x1, y1, x2, y2
+        ancho_caja = max(1, x2 - x1)
+
+        for c in range(1, num):   # 0 = fondo
+            cx, cy, cw, ch, _area = stats[c]
+            if ch > tol_alto * alto_med or ch < 0.40 * alto_med:
+                continue          # componente no compatible con un caracter
+            if cw > 1.8 * ancho_caja and cw > tol_alto * alto_med:
+                continue          # componente demasiado ancho para una caja individual
+            ox1, ox2 = max(x1, cx), min(x2, cx + cw)
+            if ox2 <= ox1:
+                continue
+            if (ox2 - ox1) / float(cw) < 0.50:
+                continue
+            nx1 = max(lim_izq, min(nx1, cx))
+            ny1 = min(ny1, cy)
+            nx2 = min(lim_der, max(nx2, cx + cw))
+            ny2 = max(ny2, cy + ch)
+
+        nuevas.append((max(0, nx1), max(0, ny1), min(W, nx2), min(H, ny2)))
+    return nuevas
 
 
 def segmentar(imagen, modelo, cfg=None):
@@ -52,9 +106,15 @@ def segmentar(imagen, modelo, cfg=None):
     entrada = cv2.resize(gris, (w, h), interpolation=cv2.INTER_AREA)
     entrada = entrada.astype("float32")[None, :, :, None]
 
-    mascara = modelo.predict(entrada, verbose=0)[0, :, :, 0]
+    # llamada directa al modelo (no .predict): mismo resultado, MUCHO mas rapido para
+    # 1 sola muestra (predict arma una tf.data pipeline en cada llamada). training=False
+    # -> BatchNorm/Dropout en modo inferencia, identico a predict().
+    mascara = modelo(entrada, training=False).numpy()[0, :, :, 0]
     cajas, _ = mask_to_boxes(mascara, imagen.shape, cfg["threshold"],
                              cfg["min_area_ratio"], cfg["padding"], cfg["char_aspect"])
+    # Recupera tinta omitida por la mascara sin invadir caracteres vecinos.
+    if cfg.get("refinar_tinta", True):
+        cajas = _refinar_cajas_por_tinta(gris, cajas)
     crops = [imagen[y1:y2, x1:x2] for (x1, y1, x2, y2) in cajas]
     return cajas, crops
 

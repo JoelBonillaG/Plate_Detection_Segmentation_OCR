@@ -59,7 +59,7 @@ def main():
 
     print(f"\nProcesadas con placa: {ok}")
     print(f"Crops en  : {os.path.join(AQUI, 'segmentacion', 'segmentadas')}")
-    print(f"Textos en : {os.path.join(AQUI, 'ocr', 'salidas')}")
+    print(f"Textos en : {os.path.join(AQUI, 'clasificacion_caracteres', 'salidas')}")
 
 
 if __name__ == "__main__":

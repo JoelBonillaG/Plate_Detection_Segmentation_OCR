@@ -27,13 +27,13 @@ sys.path.insert(0, str(DIR / "camara"))
 sys.path.insert(0, str(DIR / "pipeline"))
 sys.path.insert(0, str(BACKEND_DIR))
 
-# ── config del modulo de vision (vision/config.json) -> sin tocar el codigo ──
+# ── configuracion del modulo de vision (vision/config.json) ──
 #   usar_filtros    : True  -> enderezada -> filtros -> segmentacion
 #                     False -> segmentacion directa (sin bilateral/unsharp: mas detalle)
 #   usar_enderezado : True  -> corrige perspectiva (warp) si la placa esta torcida
-#                     False -> placa al OCR SIN warp (recorte nativo, maxima calidad)
+#                     False -> placa al clasificador sin warp (recorte nativo)
 #   fuente          : null -> usa camara_idx de camara/config.json ; o int/ruta/URL.
-#                     El argumento de linea de comandos SIEMPRE manda sobre esto.
+#                     El argumento de linea de comandos tiene prioridad.
 _CONFIG_PATH = DIR / "config.json"
 _CFG_DEFAULTS = {"usar_filtros": False, "usar_enderezado": True, "fuente": None}
 _cfg = dict(_CFG_DEFAULTS)
@@ -53,7 +53,7 @@ from integration import hacer_al_capturar, broadcast_status
 
 
 if __name__ == "__main__":
-    # arrancar el puente WS hacia la API antes del loop de camara
+    # El puente WebSocket hacia la API se inicia antes del loop de camara.
     bridge.start()
 
     # DETECTAR_CARROS (en camara.py) es la unica fuente de verdad: ajusta tanto
@@ -65,20 +65,21 @@ if __name__ == "__main__":
     def detectar_en_vivo(frame):
         return cadena.detectar_placa_en_vivo(frame, modelos)
 
-    # fuente: config (null -> camara_idx).
+    # Fuente configurada; null usa camara_idx.
     fuente = CAMARA_IDX if _cfg.get("fuente") is None else _cfg["fuente"]
-    # la fuente elegida desde el FRONTEND (runtime_config.json) manda sobre el config:
-    # asi, cuando el API lanza la vision bajo demanda, arranca con el video elegido.
+    # La fuente elegida desde el frontend tiene prioridad sobre vision/config.json.
     try:
-        from src.app.runtime import get_runtime
+        from src.api.runtime import get_runtime
         _src = get_runtime().get("source")
         if _src == "live":
             fuente = CAMARA_IDX
+        elif _src == "idle":
+            fuente = "idle"
         elif _src:
-            fuente = _src
+            fuente = int(_src) if str(_src).isdigit() else _src
     except Exception:
         pass
-    # el argumento CLI manda sobre todo (start_vision.ps1 "ruta\\video.mp4").
+    # El argumento CLI tiene prioridad sobre la configuracion persistida.
     if len(sys.argv) > 1:
         arg = sys.argv[1]
         fuente = int(arg) if arg.isdigit() else arg
